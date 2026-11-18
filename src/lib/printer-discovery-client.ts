@@ -19,7 +19,7 @@ export async function discoverInstalledPrinters(
     endpoint.search ||
     endpoint.hash
   )
-    throw new Error("Save and enable this device's enrolled local bridge connection first.");
+    throw new Error("Connect this computer first: choose Connect this PC.");
   const response = await fetch(new URL("/printers", endpoint), {
     headers: { Authorization: `Bearer ${config.token}` },
     credentials: "omit",
@@ -31,12 +31,14 @@ export async function discoverInstalledPrinters(
   });
   if (response.status === 401)
     throw Object.assign(
-      new Error("This computer's print bridge is connected from another browser or restaurant."),
+      new Error(
+        "This computer is connected to another browser or restaurant. Choose Reconnect this PC.",
+      ),
       { code: "BRIDGE_PAIRED_ELSEWHERE" },
     );
   if (!response.ok)
     throw new Error(
-      "Installed printers could not be detected. Check the local bridge and Windows printer setup.",
+      "Couldn't list the printers on this computer. Check that the Seramet Print Bridge is running, then try again.",
     );
   const body = await response.json();
   if (
@@ -46,7 +48,9 @@ export async function discoverInstalledPrinters(
     !body.bridgeId
   )
     throw Object.assign(
-      new Error("This bridge is not enrolled for the selected restaurant and branch."),
+      new Error(
+        "This computer is set up for a different restaurant or branch. Choose Reconnect this PC.",
+      ),
       { code: "BRIDGE_PAIRED_ELSEWHERE" },
     );
   if (
@@ -65,7 +69,9 @@ export async function discoverInstalledPrinters(
         printer.driver.length > 512,
     )
   )
-    throw new Error("The bridge returned an invalid printer inventory.");
+    throw new Error(
+      "The print bridge sent an unexpected printer list. Update the print bridge, then try again.",
+    );
   return {
     bridgeId: body.bridgeId as string,
     printers: body.printers.map((printer: DiscoveredPrinter) => ({

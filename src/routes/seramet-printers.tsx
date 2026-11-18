@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
-import { Activity, Cable, ImageIcon, Printer, RotateCcw, ShieldCheck, Upload } from "lucide-react";
+import { Activity, ImageIcon, Printer, Upload } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { PrinterAdministration } from "@/components/app/PrinterAdministration";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
@@ -23,15 +23,22 @@ import {
   type PrintTemplateSettings,
 } from "@/lib/seramet-print-service";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
+import {
+  documentTypeLabels,
+  kitchenModeLabels,
+  kitchenTicketKindLabels,
+  kitchenTicketStatusLabels,
+  printerRoleLabels,
+} from "@/lib/printer-labels";
 import { solidRules } from "../../printing-core/solid-rules.mjs";
 
 export const Route = createFileRoute("/seramet-printers")({
   head: () => ({
     meta: [
-      { title: "Printers & Devices - Hardware and print routing" },
+      { title: "Printers" },
       {
         name: "description",
-        content: "Printer settings, health, routing, templates and reprint audit controls.",
+        content: "Set up your printers, choose what each one prints and print test pages.",
       },
     ],
   }),
@@ -116,7 +123,7 @@ function SerametPrinters() {
     online: false,
     printers: [],
   });
-  const [notice, setNotice] = useState("No test job sent in this session.");
+  const [notice, setNotice] = useState("");
   const [kotRecoveryBusy, setKotRecoveryBusy] = useState(false);
   const kotActionRef = useRef(false);
   const [kotRecoveryReason, setKotRecoveryReason] = useState("");
@@ -142,7 +149,7 @@ function SerametPrinters() {
     selectedBranchId === activeBranchId && hasPermission(permissions.settingsBranchManage);
   const mayDeliverKot =
     selectedBranchId === activeBranchId && hasPermission(permissions.ordersUpdate);
-  const [logoNotice, setLogoNotice] = useState("No receipt logo uploaded in this session.");
+  const [logoNotice, setLogoNotice] = useState("");
   const [logoAssets, setLogoAssets] = useState<Record<string, ReceiptLogoAsset | undefined>>({});
 
   useEffect(() => setBranch(activeBranch), [activeBranch]);
@@ -161,7 +168,7 @@ function SerametPrinters() {
       (order) => order.id === obligation.orderId && order.branchId === selectedBranchId,
     );
     if (!original) {
-      setNotice("Authoritative order is not visible for this KOT. Switch to its assigned branch.");
+      setNotice("This order isn't in the selected branch. Switch to the branch that took it.");
       return;
     }
     kotActionRef.current = true;
@@ -191,8 +198,8 @@ function SerametPrinters() {
             : {}),
         }).catch(() =>
           setNotice(
-            "Recovery was attempted, but its server acknowledgement was not saved. " +
-              "Verify the KOT status before any further printing.",
+            "The ticket was sent, but Seramet couldn't record it. " +
+              "Check the kitchen printer before printing it again.",
           ),
         );
       };
@@ -237,16 +244,16 @@ function SerametPrinters() {
           outcome: "UNCERTAIN",
           failureReason: "No recovery delivery route was queued",
         });
-        throw new Error("No recovery delivery route was queued. Reinspect the printer setup.");
+        throw new Error("No printer is set up for this station. Check Your printers above.");
       }
       setNotice(
-        `Recovery started for ${obligation.orderId} / ${obligation.station}. ` +
-          "Check the physical output. Bridge acceptance does not prove printing.",
+        `Printing ${obligation.orderId} for ${obligation.station}. ` +
+          "Check that the ticket came out of the printer.",
       );
     } catch (error) {
       setNotice(
-        (error instanceof Error ? error.message : "KOT recovery could not start") +
-          " Inspect the durable server status before trying again.",
+        (error instanceof Error ? error.message : "Couldn't print this ticket.") +
+          " Check the kitchen printer before trying again.",
       );
     } finally {
       kotActionRef.current = false;
@@ -269,12 +276,12 @@ function SerametPrinters() {
       });
       setNotice(
         decision === "RETRY"
-          ? "Manager released the uncertain KOT. Use its Recover action only after checking paper."
-          : "Manager recorded confirmed KOT delivery with a review reason.",
+          ? "Reprint allowed. Choose Print again once you've checked the printer."
+          : "Marked as printed.",
       );
       setKotRecoveryReason("");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "KOT review failed");
+      setNotice(error instanceof Error ? error.message : "Couldn't save your decision. Try again.");
     } finally {
       kotActionRef.current = false;
       setKotRecoveryBusy(false);
@@ -290,12 +297,12 @@ function SerametPrinters() {
         obligationId: obligation.id,
         reason: kotRecoveryReason.trim(),
       });
-      setNotice(
-        "Separate auditable KOT reprint authorized. Inspect the new pending ticket before delivery.",
-      );
+      setNotice("Reprint approved. It's listed under Kitchen tickets to check, ready to print.");
       setKotRecoveryReason("");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "KOT reprint approval failed");
+      setNotice(
+        error instanceof Error ? error.message : "Couldn't approve the reprint. Try again.",
+      );
     } finally {
       kotActionRef.current = false;
       setKotRecoveryBusy(false);
@@ -346,7 +353,7 @@ function SerametPrinters() {
       setInstalledBridge({
         online: false,
         printers: [],
-        error: "Installed bridge is not configured.",
+        error: "This computer isn't connected to a print bridge.",
       });
       return;
     }
@@ -366,7 +373,7 @@ function SerametPrinters() {
       setInstalledBridge({
         online: false,
         printers: [],
-        error: error instanceof Error ? error.message : "Installed bridge is unavailable.",
+        error: error instanceof Error ? error.message : "The print bridge isn't responding.",
       });
     }
   }, [bridgeConfig]);
@@ -380,8 +387,11 @@ function SerametPrinters() {
     const result =
       type === "KITCHEN" ? sendKitchenTickets(order) : printCustomerDocument(order, type);
     setBridgeStatus(SerametLocalPrintBridge.getStatus());
+    const label = type === "KITCHEN" ? "kitchen ticket" : type.toLowerCase();
     setNotice(
-      `${result.jobs.length} ${type.toLowerCase()} diagnostic job(s) created. Transport and physical output are not yet confirmed.`,
+      result.jobs.length
+        ? `Test ${label} sent. Check that it came out of the printer.`
+        : `No printer is set up to print a ${label}.`,
     );
   };
 
@@ -399,44 +409,46 @@ function SerametPrinters() {
       const key = scope === "Branch" ? `Branch:${branch}` : "Company";
       setLogoAssets((current) => ({ ...current, [key]: asset }));
       setLogoNotice(
-        `${scope === "Branch" ? branch : "Company"} logo processed for 80mm/58mm monochrome receipt printers.`,
+        `Showing how the ${scope === "Branch" ? branch : "company"} logo looks in black and white.`,
       );
     } catch (error) {
-      setLogoNotice(error instanceof Error ? error.message : "Could not process receipt logo.");
+      setLogoNotice(
+        error instanceof Error ? error.message : "Couldn't read this image. Try a PNG or JPG.",
+      );
     } finally {
       event.target.value = "";
     }
   };
 
+  const branchPicker = (
+    <select
+      value={branch}
+      onChange={(event) => setBranch(event.target.value)}
+      disabled={!canSwitchBranch}
+      title={canSwitchBranch ? "Select an assigned branch" : "Assigned branch"}
+      aria-label="Branch"
+      className="h-9 rounded-md border border-border bg-card px-3 text-[13px] font-semibold outline-none"
+    >
+      {branchOptions.map((item) => (
+        <option key={item}>{item}</option>
+      ))}
+    </select>
+  );
+
   if (!profile) {
     return (
-      <AppShell
-        title="Printers & devices"
-        actions={
-          <select
-            value={branch}
-            onChange={(event) => setBranch(event.target.value)}
-            disabled={!canSwitchBranch}
-            title={canSwitchBranch ? "Select an assigned branch" : "Assigned branch"}
-            className="h-9 rounded-md border border-border bg-card px-3 text-[13px] font-semibold outline-none"
-          >
-            {branchOptions.map((item) => (
-              <option key={item}>{item}</option>
-            ))}
-          </select>
-        }
-      >
+      <AppShell title="Printers" actions={branchPicker}>
         <PrinterAdministration />
         <KitchenPrintBypassPanel />
         <Panel>
           <PanelHead
-            title="Print setup required"
+            title="Finish setting up printing"
             sub={branch}
             right={<Printer className="h-4 w-4 text-warning" />}
           />
           <div className="space-y-3 p-4 text-[13px]">
             <p className="max-w-2xl text-muted-foreground">
-              {configurationError ?? "Printing is not configured for this branch."}
+              {configurationError ?? "Printing isn't set up for this branch yet."}
             </p>
             <p className="max-w-2xl text-muted-foreground">
               Finish printer setup in Setup Centre, then come back to print a test page.
@@ -453,22 +465,43 @@ function SerametPrinters() {
     );
   }
 
+  const failedJobs = jobs.filter((job) => job.status === "Failed").length;
+  const bridgeOnline = bridgeConfigReady(bridgeConfig) && installedBridge.online;
+  const kitchenTicketsToCheck = recoveryItems.length > 0 || recentlyAccepted.length > 0;
+  const routeRows = (Object.keys(profile.documentRoutes) as PrintDocumentType[]).map(
+    (documentType) => {
+      const resolution = SerametPrintService.resolvePrinter(profile, documentType);
+      const route = profile.documentRoutes[documentType];
+      const printedOn =
+        route.primaryRole === "KDS"
+          ? "Kitchen screen"
+          : (resolution.printer?.name ?? resolution.fallbackPrinter?.name);
+      return {
+        documentType,
+        printedOn,
+        backup:
+          resolution.printer && resolution.fallbackPrinter
+            ? resolution.fallbackPrinter.name
+            : undefined,
+        copies: resolution.route.copies,
+      };
+    },
+  );
+  const testKind = (documentType: PrintDocumentType) =>
+    documentType === "FOOD_KOT" ||
+    documentType === "BAR_TICKET" ||
+    documentType === "DISPATCH_TICKET"
+      ? ("KITCHEN" as const)
+      : documentType === "BILL" || documentType === "RECEIPT" || documentType === "INVOICE"
+        ? documentType
+        : null;
+
   return (
     <AppShell
-      title="Printers & devices"
+      title="Printers"
       actions={
         <>
-          <select
-            value={branch}
-            onChange={(event) => setBranch(event.target.value)}
-            disabled={!canSwitchBranch}
-            title={canSwitchBranch ? "Select an assigned branch" : "Assigned branch"}
-            className="h-9 rounded-md border border-border bg-card px-3 text-[13px] font-semibold outline-none"
-          >
-            {branchOptions.map((item) => (
-              <option key={item}>{item}</option>
-            ))}
-          </select>
+          {branchPicker}
           <Btn variant="primary" onClick={() => runTest("BILL")}>
             Test bill
           </Btn>
@@ -476,333 +509,172 @@ function SerametPrinters() {
       }
     >
       <PrinterAdministration />
-      <Panel className="mb-4">
-        <PanelHead
-          title="Durable kitchen ticket recovery"
-          sub="Server-backed KOT obligations survive browser crashes. Uncertain paper delivery needs a manual check."
-          right={<Status>{recoveryItems.length} outstanding</Status>}
-        />
-        <div className="space-y-3 p-4 text-[13px]">
-          {!mayDeliverKot && (
-            <p className="text-muted-foreground">
-              Select this branch as your active session branch to recover its KOT tickets.
-            </p>
-          )}
-          {recoveryItems.length === 0 ? (
-            <p className="text-muted-foreground">
-              No outstanding original or amendment KOT obligations in this branch.
-            </p>
-          ) : (
-            <>
-              {mayReviewKot && (
-                <label className="block">
-                  <span className="font-semibold">
-                    Manager review reason (at least 12 characters)
-                  </span>
-                  <input
-                    value={kotRecoveryReason}
-                    onChange={(event) => setKotRecoveryReason(event.target.value)}
-                    className="mt-2 w-full rounded-md border bg-card px-3 py-2"
-                    placeholder="Paper checked at kitchen station, reason and outcome..."
-                  />
-                </label>
-              )}
-              {recoveryItems.map((obligation) => (
-                <div key={obligation.id} className="rounded-lg border p-3">
-                  <div className="font-semibold">
-                    {obligation.orderId} · {obligation.station} · {obligation.kind}
-                  </div>
-                  <p className="mt-1 text-muted-foreground">
-                    {obligation.status.replaceAll("_", " ")} — {obligation.lines.length} line(s). A
-                    previous claim may have physically printed even without an acknowledgement.
-                  </p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {obligation.status === "PENDING" && (
-                      <Btn
-                        onClick={() => void recoverPendingKot(obligation)}
-                        disabled={kotRecoveryBusy || !mayDeliverKot}
-                      >
-                        {obligation.reviewReason
-                          ? "Audited recovery print"
-                          : "Deliver pending ticket"}
-                      </Btn>
-                    )}
-                    {obligation.status !== "PENDING" && mayReviewKot && (
-                      <>
-                        <Btn
-                          onClick={() => void reviewKot(obligation, "CONFIRM_DELIVERED")}
-                          disabled={kotRecoveryBusy || kotRecoveryReason.trim().length < 12}
-                        >
-                          Confirm after checking output
-                        </Btn>
-                        <Btn
-                          onClick={() => void reviewKot(obligation, "RETRY")}
-                          disabled={kotRecoveryBusy || kotRecoveryReason.trim().length < 12}
-                        >
-                          Approve one recovery attempt
-                        </Btn>
-                      </>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </>
-          )}
+      {notice && (
+        <div className="mb-4 rounded-md border border-border bg-card px-3 py-2 text-[13px]">
+          {notice}
         </div>
-      </Panel>
-      {recentlyAccepted.length > 0 && (
+      )}
+      {kitchenTicketsToCheck && (
         <Panel className="mb-4">
           <PanelHead
-            title="Recent bridge-accepted KOT tickets"
-            sub="Bridge acknowledgement alone cannot prove physical paper delivery."
+            title="Kitchen tickets to check"
+            sub="These tickets may not have printed. Check the kitchen printer before printing again, so the kitchen doesn't make an order twice."
+            right={<Status>{recoveryItems.length} to check</Status>}
           />
-          <div className="space-y-2 p-4 text-[13px]">
-            {recentlyAccepted.map((obligation) => (
-              <div
-                key={obligation.id}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3"
-              >
-                <div>
-                  <div className="font-semibold">
-                    {obligation.orderId} · {obligation.station}
-                  </div>
-                  <div className="text-muted-foreground">
-                    {obligation.kind} · {obligation.createdAt}
-                  </div>
+          <div className="space-y-3 p-4 text-[13px]">
+            {!mayDeliverKot && (
+              <p className="text-muted-foreground">
+                To print this branch's tickets, switch to it as your working branch.
+              </p>
+            )}
+            {mayReviewKot && (
+              <label className="block">
+                <span className="font-semibold">
+                  What did you check? (manager, at least 12 characters)
+                </span>
+                <input
+                  value={kotRecoveryReason}
+                  onChange={(event) => setKotRecoveryReason(event.target.value)}
+                  className="mt-2 w-full rounded-md border bg-card px-3 py-2"
+                  placeholder="For example: checked the kitchen printer, ticket was missing"
+                />
+              </label>
+            )}
+            {recoveryItems.length === 0 && (
+              <p className="text-muted-foreground">Nothing to check right now.</p>
+            )}
+            {recoveryItems.map((obligation) => (
+              <div key={obligation.id} className="rounded-lg border p-3">
+                <div className="font-semibold">
+                  {obligation.orderId} · {obligation.station} ·{" "}
+                  {kitchenTicketKindLabels[obligation.kind] ?? obligation.kind}
                 </div>
-                {mayReviewKot && (
-                  <Btn
-                    onClick={() => void requestAuditedReprint(obligation)}
-                    disabled={kotRecoveryBusy || kotRecoveryReason.trim().length < 12}
-                  >
-                    Approve separate audited reprint
-                  </Btn>
-                )}
+                <p className="mt-1 text-muted-foreground">
+                  {kitchenTicketStatusLabels[obligation.status] ?? obligation.status} ·{" "}
+                  {obligation.lines.length} item{obligation.lines.length === 1 ? "" : "s"}.
+                  {obligation.status !== "PENDING" &&
+                    " It may have printed even though Seramet didn't hear back."}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {obligation.status === "PENDING" && (
+                    <Btn
+                      onClick={() => void recoverPendingKot(obligation)}
+                      disabled={kotRecoveryBusy || !mayDeliverKot}
+                    >
+                      {obligation.reviewReason ? "Print again" : "Print ticket now"}
+                    </Btn>
+                  )}
+                  {obligation.status !== "PENDING" && mayReviewKot && (
+                    <>
+                      <Btn
+                        onClick={() => void reviewKot(obligation, "CONFIRM_DELIVERED")}
+                        disabled={kotRecoveryBusy || kotRecoveryReason.trim().length < 12}
+                      >
+                        It printed
+                      </Btn>
+                      <Btn
+                        onClick={() => void reviewKot(obligation, "RETRY")}
+                        disabled={kotRecoveryBusy || kotRecoveryReason.trim().length < 12}
+                      >
+                        It didn't print: allow a reprint
+                      </Btn>
+                    </>
+                  )}
+                </div>
               </div>
             ))}
+            {recentlyAccepted.length > 0 && (
+              <details className="rounded-lg border p-3">
+                <summary className="cursor-pointer font-semibold">
+                  Recently sent kitchen tickets ({recentlyAccepted.length})
+                </summary>
+                <p className="mt-2 text-muted-foreground">
+                  These reached the printer. If one didn't come out, a manager can approve a
+                  reprint.
+                </p>
+                <div className="mt-2 space-y-2">
+                  {recentlyAccepted.map((obligation) => (
+                    <div
+                      key={obligation.id}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3"
+                    >
+                      <div>
+                        <div className="font-semibold">
+                          {obligation.orderId} · {obligation.station}
+                        </div>
+                        <div className="text-muted-foreground">
+                          {kitchenTicketKindLabels[obligation.kind] ?? obligation.kind} ·{" "}
+                          {obligation.createdAt}
+                        </div>
+                      </div>
+                      {mayReviewKot && (
+                        <Btn
+                          onClick={() => void requestAuditedReprint(obligation)}
+                          disabled={kotRecoveryBusy || kotRecoveryReason.trim().length < 12}
+                        >
+                          Approve a reprint
+                        </Btn>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
           </div>
         </Panel>
       )}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Printers" value={profile.printers.length} />
-        <Metric label="Connected" value={connected} />
-        <Metric label="Print jobs" value={jobs.length} />
-        <Metric
-          label="Failures"
-          value={failures + jobs.filter((job) => job.status === "Failed").length}
-          invert
+
+      <Panel className="mb-4">
+        <PanelHead
+          title="What prints where"
+          sub={`Kitchen orders go to: ${kitchenModeLabels[profile.kitchenMode] ?? profile.kitchenMode}`}
         />
-      </div>
-
-      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(340px,0.8fr)]">
-        <Panel>
-          <PanelHead
-            title="Printer health"
-            sub={`${profile.branch} - ${profile.kitchenMode.replaceAll("_", " ").toLowerCase()}`}
-            right={<Status>{installedBridge.online ? "Bridge reachable" : "Unknown"}</Status>}
-          />
-          <div className="grid gap-3 p-4 md:grid-cols-2">
-            {visiblePrinters.map((printer) => (
-              <article
-                key={printer.id}
-                className="rounded-lg border border-border bg-secondary/30 p-3"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-[13px] font-bold">
-                      <Printer className="h-4 w-4 text-primary" />
-                      <span className="truncate">{printer.name}</span>
-                    </div>
-                    <div className="mt-1 text-[12px] text-muted-foreground">
-                      {printer.id} - {printer.driver}
-                    </div>
-                  </div>
-                  <Status>{printer.connection}</Status>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {printer.roles.map((role) => (
-                    <span
-                      key={role}
-                      className="rounded-md border border-border bg-card px-2 py-1 text-[11px] font-semibold text-muted-foreground"
-                    >
-                      {role}
-                    </span>
-                  ))}
-                </div>
-                <dl className="mt-3 grid grid-cols-3 gap-2 text-[12px]">
-                  <div>
-                    <dt className="text-muted-foreground">Queue</dt>
-                    <dd className="num font-bold">{printer.queue}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">Failures</dt>
-                    <dd className="num font-bold">{printer.failures}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">Last</dt>
-                    <dd className="font-bold">{printer.lastPrintAt}</dd>
-                  </div>
-                </dl>
-              </article>
-            ))}
-          </div>
-        </Panel>
-
-        <Panel>
-          <PanelHead
-            title="Local print bridge"
-            sub={bridgeConfigReady(bridgeConfig) ? bridgeConfig.endpoint : bridgeStatus.machine}
-            right={<Cable className="h-4 w-4 text-primary" />}
-          />
-          <div className="space-y-3 p-4 text-[13px]">
-            <div className="rounded-lg border border-border bg-secondary/40 p-3">
-              <div className="flex items-center justify-between">
-                <span className="font-semibold">{bridgeStatus.name}</span>
-                <Status>
-                  {bridgeConfigReady(bridgeConfig)
-                    ? installedBridge.online
-                      ? "Connected"
-                      : "Offline"
-                    : "Not connected"}
-                </Status>
-              </div>
-              <div className="mt-1 text-[12px] text-muted-foreground">
-                {bridgeConfigReady(bridgeConfig)
-                  ? installedBridge.online
-                    ? `Version ${installedBridge.version ?? "unknown"} - ${installedBridge.platform ?? "OS"} - ${installedBridge.printers.length} OS printer(s) visible`
-                    : (installedBridge.error ?? "Installed bridge is unavailable")
-                  : 'No print bridge is connected on this computer. Use "Connect this PC" under Configured printers.'}
-              </div>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {bridgeStatus.supportedConnections.map((item) => (
-                  <span
-                    key={item}
-                    className="rounded-md bg-card px-2 py-1 text-[11px] font-semibold text-muted-foreground"
-                  >
-                    {item}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <Btn onClick={() => void refreshInstalledBridge()}>
-                <ShieldCheck className="h-4 w-4" />
-                Test bridge
-              </Btn>
-              <Btn
-                onClick={() => {
-                  setBridgeStatus(SerametLocalPrintBridge.getStatus());
-                  void refreshInstalledBridge();
-                }}
-              >
-                <Activity className="h-4 w-4" />
-                Refresh
-              </Btn>
-            </div>
-            <div className="rounded-md bg-card px-3 py-2 text-[12px] text-muted-foreground">
-              {notice}
-            </div>
-          </div>
-        </Panel>
-      </div>
-
-      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <Panel>
-          <PanelHead
-            title="Routing matrix"
-            sub="One-printer and multi-printer routing uses the same resolver as POS"
-          />
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr>
-                  <TH>Document</TH>
-                  <TH>Primary role</TH>
-                  <TH>Fallback</TH>
-                  <TH>Template</TH>
-                  <TH className="text-right">Copies</TH>
-                  <TH>Action</TH>
-                </tr>
-              </thead>
-              <tbody>
-                {(
-                  Object.entries(profile.documentRoutes) as [
-                    PrintDocumentType,
-                    (typeof profile.documentRoutes)[PrintDocumentType],
-                  ][]
-                ).map(([documentType, route]) => (
-                  <tr key={documentType}>
-                    <TD className="font-semibold">{documentType.replaceAll("_", " ")}</TD>
-                    <TD>{route.primaryRole}</TD>
-                    <TD>{route.fallbackRole ?? "Auto front fallback"}</TD>
-                    <TD className="text-muted-foreground">{route.template}</TD>
-                    <TD className="num text-right">{route.copies}</TD>
+        <div className="overflow-x-auto">
+          <table aria-label="What prints where" className="w-full">
+            <thead>
+              <tr>
+                <TH>Document</TH>
+                <TH>Prints on</TH>
+                <TH>Backup</TH>
+                <TH className="text-right">Copies</TH>
+                <TH>Test</TH>
+              </tr>
+            </thead>
+            <tbody>
+              {routeRows.map((row) => {
+                const kind = testKind(row.documentType);
+                return (
+                  <tr key={row.documentType}>
+                    <TD className="font-semibold">
+                      {documentTypeLabels[row.documentType] ?? row.documentType}
+                    </TD>
                     <TD>
-                      <button
-                        onClick={() =>
-                          runTest(
-                            documentType === "FOOD_KOT" ||
-                              documentType === "BAR_TICKET" ||
-                              documentType === "DISPATCH_TICKET"
-                              ? "KITCHEN"
-                              : (documentType as "BILL" | "RECEIPT" | "INVOICE"),
-                          )
-                        }
-                        className="text-[12px] font-semibold text-primary hover:underline"
-                      >
-                        Test
-                      </button>
+                      {row.printedOn ?? <span className="text-warning">No printer set up</span>}
+                    </TD>
+                    <TD className="text-muted-foreground">{row.backup ?? "None"}</TD>
+                    <TD className="num text-right">{row.copies}</TD>
+                    <TD>
+                      {kind && (
+                        <button
+                          onClick={() => runTest(kind)}
+                          className="text-[12px] font-semibold text-primary hover:underline"
+                        >
+                          Test
+                        </button>
+                      )}
                     </TD>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
 
-        <Panel>
-          <PanelHead
-            title="Reprint audit"
-            sub={`${reprints.length} duplicate events this session`}
-            right={
-              <span className="text-xs text-muted-foreground">
-                Use authoritative document recovery
-              </span>
-            }
-          />
-          <div className="max-h-[320px] space-y-2 overflow-y-auto p-4">
-            {reprints.length === 0 && (
-              <div className="rounded-lg border border-dashed border-border p-4 text-[13px] text-muted-foreground">
-                Reprinted receipts, bills, invoices and KOTs appear here with reason, operator and
-                original job.
-              </div>
-            )}
-            {reprints.map((entry) => (
-              <article
-                key={entry.id}
-                className="rounded-lg border border-border bg-secondary/30 p-3 text-[12px]"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-bold">{entry.documentType.replaceAll("_", " ")}</span>
-                  <Status>{entry.status === "Logged" ? "Approved" : "Rejected"}</Status>
-                </div>
-                <div className="mt-1 text-muted-foreground">
-                  Original {entry.originalJobId} - New {entry.jobId}
-                </div>
-                <div className="mt-1">{entry.reason}</div>
-                <div className="mt-1 text-muted-foreground">
-                  {entry.requestedBy} - {entry.createdAt}
-                </div>
-              </article>
-            ))}
-          </div>
-        </Panel>
-      </div>
-
-      <Panel className="mt-4">
+      <Panel className="mb-4">
         <PanelHead
-          title="Receipt logo assets"
-          sub="Company logo is the default; branch logo overrides it for the selected branch"
+          title="Logo preview"
+          sub="See how a logo will look in black and white on receipt paper. The preview isn't saved and doesn't change your receipts."
           right={<ImageIcon className="h-4 w-4 text-primary" />}
         />
         <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
@@ -810,7 +682,7 @@ function SerametPrinters() {
             <div className="grid gap-2 sm:grid-cols-2">
               <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-secondary/30 px-4 py-5 text-[13px] font-semibold hover:bg-secondary">
                 <Upload className="h-4 w-4 text-primary" />
-                Upload company logo
+                Preview company logo
                 <input
                   type="file"
                   accept="image/*"
@@ -820,7 +692,7 @@ function SerametPrinters() {
               </label>
               <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-secondary/30 px-4 py-5 text-[13px] font-semibold hover:bg-secondary">
                 <Upload className="h-4 w-4 text-primary" />
-                Upload {branch} logo
+                Preview {branch} logo
                 <input
                   type="file"
                   accept="image/*"
@@ -829,43 +701,22 @@ function SerametPrinters() {
                 />
               </label>
             </div>
-            <div className="rounded-md bg-card px-3 py-2 text-[12px] text-muted-foreground">
-              {logoNotice}
-            </div>
-            <dl className="grid grid-cols-2 gap-2 text-[12px]">
-              <div className="rounded-lg border border-border bg-secondary/30 p-3">
-                <dt className="text-muted-foreground">Active scope</dt>
-                <dd className="mt-1 font-bold">
-                  {activeLogo
-                    ? `${activeLogo.scope}${activeLogo.branch ? ` - ${activeLogo.branch}` : ""}`
-                    : "Text fallback"}
-                </dd>
+            {logoNotice && (
+              <div className="rounded-md bg-card px-3 py-2 text-[12px] text-muted-foreground">
+                {logoNotice}
               </div>
-              <div className="rounded-lg border border-border bg-secondary/30 p-3">
-                <dt className="text-muted-foreground">Printer payload</dt>
-                <dd className="mt-1 font-bold">
-                  {activeLogo
-                    ? `${Math.ceil(activeLogo.escposHex.length / 2).toLocaleString()} bytes`
-                    : "Logo disabled"}
-                </dd>
-              </div>
-              <div className="rounded-lg border border-border bg-secondary/30 p-3">
-                <dt className="text-muted-foreground">Raster size</dt>
-                <dd className="mt-1 font-bold">
-                  {activeLogo ? `${activeLogo.width} x ${activeLogo.height}px` : "Text only"}
-                </dd>
-              </div>
-              <div className="rounded-lg border border-border bg-secondary/30 p-3">
-                <dt className="text-muted-foreground">Fallback text</dt>
-                <dd className="mt-1 font-bold">
-                  {activeLogo?.fallbackText ?? profile.printIdentity.businessName}
-                </dd>
-              </div>
-            </dl>
+            )}
+            <p className="text-[12px] text-muted-foreground">
+              Without a logo, receipts print your business name:{" "}
+              <span className="font-semibold text-foreground">
+                {activeLogo?.fallbackText ?? profile.printIdentity.businessName}
+              </span>
+              .
+            </p>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="rounded-lg border border-border bg-secondary/30 p-3">
-              <div className="mb-2 text-[12px] font-bold text-muted-foreground">Original</div>
+              <div className="mb-2 text-[12px] font-bold text-muted-foreground">Your image</div>
               {activeLogo ? (
                 <img
                   src={activeLogo.originalDataUrl}
@@ -874,14 +725,12 @@ function SerametPrinters() {
                 />
               ) : (
                 <div className="grid h-36 place-items-center rounded-md border border-dashed border-border text-[12px] text-muted-foreground">
-                  No logo uploaded
+                  No image chosen
                 </div>
               )}
             </div>
             <div className="rounded-lg border border-border bg-secondary/30 p-3">
-              <div className="mb-2 text-[12px] font-bold text-muted-foreground">
-                Printer monochrome
-              </div>
+              <div className="mb-2 text-[12px] font-bold text-muted-foreground">How it prints</div>
               {activeLogo ? (
                 <img
                   src={activeLogo.monochromeDataUrl}
@@ -890,7 +739,7 @@ function SerametPrinters() {
                 />
               ) : (
                 <div className="grid h-36 place-items-center rounded-md border border-dashed border-border text-[12px] text-muted-foreground">
-                  Text fallback prints instead
+                  Business name prints instead
                 </div>
               )}
             </div>
@@ -898,75 +747,39 @@ function SerametPrinters() {
         </div>
       </Panel>
 
-      <Panel className="mt-4">
-        <PanelHead
-          title="Receipt, bill and invoice templates"
-          sub="Template settings drive the rendered print content used by POS"
-        />
-        <div className="grid gap-3 p-4 md:grid-cols-3">
+      <details className="mb-4 rounded-lg border border-border bg-card">
+        <summary className="cursor-pointer px-4 py-3 text-[13px] font-semibold">
+          Preview receipts and tickets
+        </summary>
+        <div className="grid gap-3 border-t border-border p-4 md:grid-cols-3">
           {Object.values(profile.templateSettings).map((template) => (
             <article
               key={template.id}
               className="rounded-lg border border-border bg-secondary/30 p-3"
             >
               <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-[13px] font-bold">{template.label}</div>
-                  <div className="text-[12px] text-muted-foreground">{template.id}</div>
-                </div>
+                <div className="text-[13px] font-bold">{template.label}</div>
                 <Status>{template.width}</Status>
               </div>
-              <dl className="mt-3 grid grid-cols-2 gap-2 text-[12px]">
-                <div>
-                  <dt className="text-muted-foreground">Copies</dt>
-                  <dd className="font-bold">{template.copies}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">QR</dt>
-                  <dd className="font-bold">{template.showQrCode ? "Yes" : "No"}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Tax</dt>
-                  <dd className="font-bold">{template.showTax ? "Shown" : "Hidden"}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Payment</dt>
-                  <dd className="font-bold">{template.showPayment ? "Shown" : "Hidden"}</dd>
-                </div>
-              </dl>
-              <div className="mt-3 flex items-center justify-between gap-2 rounded-md bg-card px-3 py-2 text-[12px]">
-                <span className="text-muted-foreground">Logo</span>
-                <span className="font-bold">
-                  {activeLogo
-                    ? `${activeLogo.scope}${activeLogo.branch ? ` - ${activeLogo.branch}` : ""}`
-                    : "Text fallback"}
-                </span>
-              </div>
-              <div className="mt-3 rounded-md bg-card px-3 py-2 text-[12px] text-muted-foreground">
-                {template.footerMessage}
-              </div>
+              <p className="mt-1 text-[12px] text-muted-foreground">
+                {template.copies} cop{template.copies === 1 ? "y" : "ies"} · tax{" "}
+                {template.showTax ? "shown" : "hidden"} · payment{" "}
+                {template.showPayment ? "shown" : "hidden"}
+                {template.showQrCode ? " · QR code" : ""}
+              </p>
               <pre className="mt-3 max-h-56 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-[10px] leading-none text-foreground">
                 {solidRules(customerPreviews[template.documentType] ?? "")}
               </pre>
             </article>
           ))}
-        </div>
-      </Panel>
-
-      <Panel className="mt-4">
-        <PanelHead
-          title="Production ticket previews"
-          sub="Kitchen, bar and KDS content uses the same renderer as POS send-to-kitchen"
-        />
-        <div className="grid gap-3 p-4 lg:grid-cols-3">
           {productionPreviews.map((job) => (
             <article
               key={`${job.documentType}-${job.kitchenDelivery}-${job.productionStation}`}
               className="rounded-lg border border-border bg-secondary/30 p-3"
             >
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <div className="text-[13px] font-bold">{job.documentType.replaceAll("_", " ")}</div>
-                <Status>{job.kitchenDelivery?.replaceAll("_", " ")}</Status>
+              <div className="mb-2 text-[13px] font-bold">
+                {documentTypeLabels[job.documentType] ?? job.documentType}
+                {job.kitchenDelivery === "KDS_DISPLAY" ? " (kitchen screen)" : ""}
               </div>
               <pre className="max-h-72 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-[10px] leading-none text-foreground">
                 {solidRules(job.content)}
@@ -974,7 +787,113 @@ function SerametPrinters() {
             </article>
           ))}
         </div>
-      </Panel>
+      </details>
+
+      <details className="rounded-lg border border-border bg-card">
+        <summary className="cursor-pointer px-4 py-3 text-[13px] font-semibold">
+          Printer status and reprint history (for technicians)
+        </summary>
+        <div className="space-y-4 border-t border-border p-4 text-[13px]">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Metric label="Printers" value={profile.printers.length} />
+            <Metric label="Connected" value={connected} />
+            <Metric label="Print jobs" value={jobs.length} />
+            <Metric label="Failures" value={failures + failedJobs} invert />
+          </div>
+          <div className="rounded-lg border border-border bg-secondary/40 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-semibold">Seramet Print Bridge on this computer</span>
+              <Status>
+                {bridgeConfigReady(bridgeConfig)
+                  ? bridgeOnline
+                    ? "Connected"
+                    : "Offline"
+                  : "Not connected"}
+              </Status>
+            </div>
+            <div className="mt-1 text-[12px] text-muted-foreground">
+              {bridgeConfigReady(bridgeConfig)
+                ? bridgeOnline
+                  ? `Version ${installedBridge.version ?? "unknown"} · ${installedBridge.printers.length} printer(s) installed in Windows`
+                  : (installedBridge.error ?? "The print bridge isn't responding.")
+                : 'Not connected. Use "Connect this PC" under Your printers.'}
+            </div>
+            <div className="mt-2">
+              <Btn
+                onClick={() => {
+                  setBridgeStatus(SerametLocalPrintBridge.getStatus());
+                  void refreshInstalledBridge();
+                }}
+              >
+                <Activity className="h-4 w-4" />
+                Check connection
+              </Btn>
+            </div>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {visiblePrinters.map((printer) => (
+              <article
+                key={printer.id}
+                className="rounded-lg border border-border bg-secondary/30 p-3"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2 font-bold">
+                    <Printer className="h-4 w-4 text-primary" />
+                    <span className="truncate">{printer.name}</span>
+                  </div>
+                  <Status>{printer.connection}</Status>
+                </div>
+                <div className="mt-1 text-[12px] text-muted-foreground">
+                  {printer.roles.map((role) => printerRoleLabels[role] ?? role).join(", ")}
+                </div>
+                <dl className="mt-3 grid grid-cols-3 gap-2 text-[12px]">
+                  <div>
+                    <dt className="text-muted-foreground">Waiting</dt>
+                    <dd className="num font-bold">{printer.queue}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Failures</dt>
+                    <dd className="num font-bold">{printer.failures}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Last print</dt>
+                    <dd className="font-bold">{printer.lastPrintAt}</dd>
+                  </div>
+                </dl>
+              </article>
+            ))}
+          </div>
+          <section>
+            <h3 className="font-semibold">Reprints this session ({reprints.length})</h3>
+            <div className="mt-2 max-h-[320px] space-y-2 overflow-y-auto">
+              {reprints.length === 0 && (
+                <p className="text-muted-foreground">
+                  Reprinted receipts, bills, invoices and kitchen tickets appear here with who
+                  reprinted them and why.
+                </p>
+              )}
+              {reprints.map((entry) => (
+                <article
+                  key={entry.id}
+                  title={`Original ${entry.originalJobId} · new ${entry.jobId}`}
+                  className="rounded-lg border border-border bg-secondary/30 p-3 text-[12px]"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold">
+                      {documentTypeLabels[entry.documentType] ?? entry.documentType}
+                    </span>
+                    <Status>{entry.status === "Logged" ? "Approved" : "Rejected"}</Status>
+                  </div>
+                  <div className="mt-1">{entry.reason}</div>
+                  <div className="mt-1 text-muted-foreground">
+                    {entry.requestedBy} · {entry.createdAt}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        </div>
+      </details>
     </AppShell>
   );
 }

@@ -35,7 +35,14 @@ import {
 } from "@/lib/print-bridge-pairing";
 import { SerametLocalPrintBridge, type PrintJob } from "@/lib/seramet-print-service";
 import type { PrinterConfiguration } from "@/printing/printer-configuration";
-import { Btn, Panel, PanelHead } from "@/components/app/ui";
+import { Btn, Panel, PanelHead, TD, TH } from "@/components/app/ui";
+import {
+  bridgeStageLabel,
+  connectionLabel,
+  kitchenModeLabels,
+  printerRoleHints,
+  printerRoleLabels,
+} from "@/lib/printer-labels";
 import {
   Dialog,
   DialogContent,
@@ -84,9 +91,14 @@ export function PrinterAdministration() {
   const [open, setOpen] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const [formRequest, setFormRequest] = useState(0);
+  // Technical printer settings start folded away, unless a required one (the
+  // print bridge ID) still needs filling in.
+  const [moreSettingsOpen, setMoreSettingsOpen] = useState(false);
   // The form renders below the printer table, often off-screen; bring it into view
   // whenever a Configure/Edit button opens it.
-  const openForm = () => {
+  const openForm = (next: PrinterConfiguration) => {
+    setDraft(next);
+    setMoreSettingsOpen(!next.bridgeId);
     setOpen(true);
     setFormRequest((count) => count + 1);
   };
@@ -135,8 +147,8 @@ export function PrinterAdministration() {
         setInventory({ ...result, scope: requestedScope });
         setDiscoveryNotice(
           result.printers.length
-            ? "Installed Windows printers detected. Physical availability has not been verified."
-            : "Windows has no installed printers for the bridge's user account.",
+            ? "Found these printers on this computer. Set one up, then print a test page to check it works."
+            : "No printers are installed in Windows on this computer. Install the printer in Windows, then try again.",
         );
       } catch (error) {
         if (inventoryScopeRef.current === requestedScope && !signal?.aborted) {
@@ -145,7 +157,7 @@ export function PrinterAdministration() {
             (error as { code?: string } | null)?.code === "BRIDGE_PAIRED_ELSEWHERE",
           );
           setDiscoveryNotice(
-            error instanceof Error ? error.message : "Printer discovery unavailable.",
+            error instanceof Error ? error.message : "Couldn't look for printers on this computer.",
           );
         }
       } finally {
@@ -197,7 +209,9 @@ export function PrinterAdministration() {
       if (!response.ok) throw new Error("Bridge queue unavailable");
       setAttempts((await response.json()).jobs);
     } catch {
-      setNotice("Bridge queue unavailable; no delivery outcome can be assumed");
+      setNotice(
+        "Couldn't read the print queue. Check that the Seramet Print Bridge is running on this computer.",
+      );
     }
   };
   const stations = getConfigurationRepository()
@@ -220,11 +234,11 @@ export function PrinterAdministration() {
       headers: headers(),
       signal: AbortSignal.timeout(10000),
     });
-    if (!response.ok) throw new Error("Printer configuration could not be loaded");
+    if (!response.ok) throw new Error("Couldn't load your printers");
     setPrinters((await response.json()).printers);
   }, [headers]);
   useEffect(() => {
-    void refresh().catch(() => setNotice("Printer configuration unavailable"));
+    void refresh().catch(() => setNotice("Couldn't load your printers. Try refreshing the page."));
   }, [branchId, refresh]);
   const save = async (printer: PrinterConfiguration, updateBranchMode = true) => {
     setBusy(true);
@@ -235,17 +249,21 @@ export function PrinterAdministration() {
         body: JSON.stringify({ ...printer, branchId, updateBranchMode }),
         signal: AbortSignal.timeout(10000),
       });
-      if (!response.ok)
-        throw new Error("Printer save rejected. Check permissions and required endpoint fields.");
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(
+          body?.message || "Couldn't save this printer. Check its details and try again.",
+        );
+      }
       await refreshConfiguration();
       await refresh();
       setOpen(false);
-      setNotice("Printer configuration saved. Transport status remains unknown until tested.");
+      setNotice("Printer saved. Print a test page to check it works.");
       window.dispatchEvent(
         new CustomEvent("seramet:hardware-profile-change", { detail: { branchId } }),
       );
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Printer save failed");
+      setNotice(error instanceof Error ? error.message : "Couldn't save this printer.");
     } finally {
       setBusy(false);
     }
@@ -282,7 +300,7 @@ export function PrinterAdministration() {
         body: JSON.stringify({ bridgeId: printer.bridgeId }),
         signal: AbortSignal.timeout(10000),
       });
-      if (!response.ok) throw new Error("Bridge enrollment was not authorized");
+      if (!response.ok) throw new Error("You don't have permission to set up this print bridge.");
       const enrollment = await response.json();
       const bytes = crypto.getRandomValues(new Uint8Array(32));
       const token = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -312,9 +330,9 @@ export function PrinterAdministration() {
       const local = { enabled: false, endpoint: "http://127.0.0.1:48777", token };
       setBridge(local);
       saveInstalledPrintBridgeConfig(local);
-      setNotice("Scoped bridge enrollment downloaded.");
+      setNotice("Print bridge setup file downloaded.");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Enrollment failed");
+      setNotice(error instanceof Error ? error.message : "Couldn't download the setup file.");
     } finally {
       setBusy(false);
     }
@@ -406,30 +424,39 @@ export function PrinterAdministration() {
       );
       setNotice(result.message);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Diagnostic delivery uncertain");
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "The test page may not have printed. Check the printer.",
+      );
     } finally {
       setBusy(false);
     }
   };
+  const roleOptionLabel = (role: (typeof roleOptions)[number]) => printerRoleLabels[role];
+  const whereLabel = (printer: SavedPrinter) =>
+    !printer.enabled
+      ? "Turned off"
+      : printer.bridgeId === thisPcBridgeId
+        ? "On this computer"
+        : "Not on this computer";
   return (
     <Panel className="mb-4">
       <PanelHead
-        title="Printers"
+        title="Your printers"
+        sub="Add the printers for this branch and choose what each one prints."
         right={
           <div className="flex gap-2">
             <Btn
-              onClick={() => void refresh().catch(() => setNotice("Refresh failed"))}
+              onClick={() =>
+                void refresh().catch(() => setNotice("Couldn't refresh your printers."))
+              }
               title="Refresh printers"
             >
               <RefreshCw className="h-4 w-4" />
             </Btn>
             {mayManage && (
-              <Btn
-                onClick={() => {
-                  setDraft(blank(branchId));
-                  openForm();
-                }}
-              >
+              <Btn onClick={() => openForm({ ...blank(branchId), bridgeId: thisPcBridgeId ?? "" })}>
                 <Plus className="h-4 w-4" />
                 Add printer
               </Btn>
@@ -450,22 +477,22 @@ export function PrinterAdministration() {
                   <strong>This computer</strong>
                   <p className="text-muted-foreground">
                     {thisPc === "checking"
-                      ? "Looking for the Seramet Print Bridge..."
+                      ? "Checking whether this computer can print..."
                       : thisPc.state === "missing"
-                        ? "The Seramet Print Bridge is not installed or not running on this computer."
+                        ? "To print from this computer, install the Seramet Print Bridge app."
                         : thisPc.state === "blocked"
-                          ? "This computer's print bridge does not accept this Seramet address."
+                          ? "The Seramet Print Bridge on this computer is blocking this website. Reinstall it from the download below."
                           : thisPc.state === "unpaired"
-                            ? `Print bridge ${thisPc.version} is ready on ${thisPc.machineName}. Connect it to this restaurant.`
+                            ? `The Seramet Print Bridge is installed on ${thisPc.machineName}. Connect it to start printing.`
                             : !installedBridge.enabled ||
                                 installedBridge.token.length < 32 ||
                                 pairedElsewhere
-                              ? `${thisPc.machineName} has a print bridge connected elsewhere. Reconnect it here.`
+                              ? `${thisPc.machineName} is connected to a different restaurant or branch. Reconnect it here.`
                               : detected
-                                ? `Connected: ${thisPc.machineName} (${thisPc.bridgeId}).`
+                                ? `${thisPc.machineName} is ready to print.`
                                 : discovering
-                                  ? `Connected: ${thisPc.machineName}. Looking for its printers...`
-                                  : `Connected: ${thisPc.machineName}, but its printers could not be listed. See the message below.`}
+                                  ? `${thisPc.machineName} is connected. Looking for its printers...`
+                                  : `${thisPc.machineName} is connected, but its printers couldn't be listed. See the message below.`}
                   </p>
                 </div>
               </div>
@@ -503,7 +530,7 @@ export function PrinterAdministration() {
             </div>
             {thisPc !== "checking" && thisPc.state === "missing" && (
               <ol className="list-decimal space-y-1 pl-5 text-muted-foreground">
-                <li>Download the bridge and open SerametPrintBridge.exe on this computer.</li>
+                <li>Download the app and open SerametPrintBridge.exe on this computer.</li>
                 <li>
                   If Windows says &quot;Windows protected your PC&quot;, choose More info, then Run
                   anyway.
@@ -516,9 +543,8 @@ export function PrinterAdministration() {
             )}
             {updateAvailable && (
               <p className="text-muted-foreground">
-                This computer runs print bridge {thisPc.version}. Download{" "}
-                {latestPrintBridgeVersion} and open it: it updates in place and stays connected.
-                Then choose Check again.
+                A newer version of the print bridge is available. Download it and open it: it
+                updates in place and stays connected. Then choose Check again.
               </p>
             )}
           </section>
@@ -532,7 +558,7 @@ export function PrinterAdministration() {
               onClick={() => void discover()}
             >
               <RefreshCw className="h-4 w-4" />
-              {discovering ? "Detecting..." : "Detect installed printers"}
+              {discovering ? "Looking for printers..." : "Find printers on this computer"}
             </Btn>
             {discoveryNotice && (
               <p role="status" className="text-sm">
@@ -546,7 +572,6 @@ export function PrinterAdministration() {
               >
                 <div className="min-w-0 break-words">
                   <strong>{printer.name}</strong>
-                  <p className="text-xs text-muted-foreground">{printer.driver}</p>
                 </div>
                 {(() => {
                   const existing = printers.find(
@@ -554,12 +579,12 @@ export function PrinterAdministration() {
                       saved.transport === "WINDOWS" && saved.osPrinterName === printer.name,
                   );
                   if (existing?.bridgeId === detected.bridgeId)
-                    return <span className="text-muted-foreground">Set up on this PC</span>;
+                    return <span className="text-muted-foreground">Already set up</span>;
                   return (
                     <Btn
                       disabled={busy}
-                      onClick={() => {
-                        setDraft(
+                      onClick={() =>
+                        openForm(
                           existing
                             ? { ...existing, bridgeId: detected.bridgeId }
                             : {
@@ -568,12 +593,11 @@ export function PrinterAdministration() {
                                 osPrinterName: printer.name,
                                 bridgeId: detected.bridgeId,
                               },
-                        );
-                        openForm();
-                      }}
+                        )
+                      }
                     >
                       <Plus className="h-4 w-4" />
-                      {existing ? "Use with this PC" : "Configure printer"}
+                      {existing ? "Use with this PC" : "Set up this printer"}
                     </Btn>
                   );
                 })()}
@@ -586,128 +610,91 @@ export function PrinterAdministration() {
             {notice}
           </div>
         )}
-        <Btn disabled={!bridge.enabled || busy} onClick={() => void inspectQueue()}>
-          <RefreshCw className="h-4 w-4" />
-          Check print queue
-        </Btn>
-        {attempts.length > 0 && (
-          <div className="max-h-64 overflow-auto">
-            <table className="w-full text-left text-sm">
+        {printers.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No printers yet.{" "}
+            {mayManage
+              ? "Use Find printers on this computer, or Add printer for a network printer."
+              : "Ask a manager to add one."}
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table aria-label="Your printers" className="w-full text-left text-sm">
               <thead>
                 <tr>
-                  <th>Job</th>
-                  <th>Stage</th>
-                  <th>Outcome</th>
+                  <TH>Name</TH>
+                  <TH>Connection</TH>
+                  <TH>Paper</TH>
+                  <TH>Prints</TH>
+                  <TH>Status</TH>
+                  <TH>Actions</TH>
                 </tr>
               </thead>
               <tbody>
-                {attempts.map((attempt) => (
-                  <tr key={attempt.id}>
-                    <td className="max-w-64 break-all py-2">{attempt.id}</td>
-                    <td>{attempt.stage}</td>
-                    <td>{attempt.outcome}</td>
+                {printers.map((printer) => (
+                  <tr key={printer.id} className="align-top">
+                    <TD className="font-semibold">{printer.name}</TD>
+                    <TD>{connectionLabel(printer.transport)}</TD>
+                    <TD>{printer.paperWidth}</TD>
+                    <TD>
+                      {printer.roles
+                        .map((role) =>
+                          role in printerRoleLabels
+                            ? printerRoleLabels[role as keyof typeof printerRoleLabels]
+                            : role,
+                        )
+                        .join(", ") || "Nothing yet"}
+                    </TD>
+                    <TD>{whereLabel(printer)}</TD>
+                    <TD>
+                      <div className="flex flex-wrap gap-2">
+                        {mayManage && (
+                          <>
+                            {(["RECEIPT", "BILL", "FOOD_KOT"] as const).map((kind) => (
+                              <Btn
+                                key={kind}
+                                disabled={busy || !printer.enabled}
+                                onClick={() => void testPrinter(printer, kind)}
+                              >
+                                <Printer className="h-4 w-4" />
+                                {kind === "FOOD_KOT"
+                                  ? "Test kitchen ticket"
+                                  : `Test ${kind.toLowerCase()}`}
+                              </Btn>
+                            ))}
+                            <Btn
+                              disabled={busy}
+                              onClick={() => openForm(printer)}
+                              title="Edit printer"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Btn>
+                            <Btn
+                              disabled={busy}
+                              onClick={() =>
+                                void save({ ...printer, enabled: !printer.enabled }, false)
+                              }
+                            >
+                              {printer.enabled ? "Disable" : "Enable"}
+                            </Btn>
+                            <Btn
+                              disabled={busy}
+                              onClick={() => setDeleting(printer)}
+                              title="Delete printer"
+                              aria-label={`Delete ${printer.name}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Btn>
+                          </>
+                        )}
+                      </div>
+                    </TD>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Connection</th>
-                <th>Paper</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {printers.map((printer) => (
-                <tr key={printer.id} className="border-t border-border">
-                  <td className="py-3">{printer.name}</td>
-                  <td>{printer.transport}</td>
-                  <td>{printer.paperWidth}</td>
-                  <td>
-                    {!printer.enabled
-                      ? "Disabled"
-                      : printer.bridgeId === thisPcBridgeId
-                        ? "On this PC"
-                        : "Unknown"}
-                  </td>
-                  <td>
-                    <div className="flex flex-wrap gap-2">
-                      {mayManage && (
-                        <>
-                          <Btn
-                            disabled={busy || !printer.enabled}
-                            onClick={() => void enroll(printer)}
-                            title="Download scoped bridge enrollment"
-                          >
-                            <Download className="h-4 w-4" />
-                          </Btn>
-                          <Btn
-                            disabled={busy}
-                            onClick={() => {
-                              setDraft(printer);
-                              openForm();
-                            }}
-                            title="Edit printer"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Btn>
-                          <Btn
-                            disabled={busy}
-                            onClick={() =>
-                              void save({ ...printer, enabled: !printer.enabled }, false)
-                            }
-                          >
-                            {printer.enabled ? "Disable" : "Enable"}
-                          </Btn>
-                          <Btn
-                            disabled={busy}
-                            onClick={() => setDeleting(printer)}
-                            title="Delete printer"
-                            aria-label={`Delete ${printer.name}`}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Btn>
-                          {(["BILL", "RECEIPT", "FOOD_KOT"] as const).map((kind) => (
-                            <Btn
-                              key={kind}
-                              disabled={busy || !printer.enabled}
-                              onClick={() => void testPrinter(printer, kind)}
-                            >
-                              <Printer className="h-4 w-4" />
-                              Test {kind === "FOOD_KOT" ? "KOT" : kind.toLowerCase()}
-                            </Btn>
-                          ))}
-                          <Btn
-                            disabled={busy || !printer.enabled}
-                            onClick={() => void testPrinter(printer, "BILL", "TEXT_ESC_POS")}
-                          >
-                            <Printer className="h-4 w-4" />
-                            Test text
-                          </Btn>
-                          {printer.transport === "TCP" && printer.raster && (
-                            <Btn
-                              disabled={busy || !printer.enabled}
-                              onClick={() => void testPrinter(printer, "BILL", "RASTER_ESC_POS")}
-                            >
-                              <Printer className="h-4 w-4" />
-                              Test raster
-                            </Btn>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
         {mayManage && open && (
           <form
             ref={formRef}
@@ -717,27 +704,21 @@ export function PrinterAdministration() {
             }}
             className="grid gap-3 border-t border-border pt-4 sm:grid-cols-2"
           >
+            <h3 className="text-sm font-bold sm:col-span-2">
+              {draft.id ? `Edit ${draft.name || "printer"}` : "Add a printer"}
+            </h3>
             <label>
               Name
               <input
                 required
                 value={draft.name}
+                placeholder="For example: Front counter"
                 onChange={(e) => setDraft({ ...draft, name: e.target.value })}
                 className={inputClass}
               />
             </label>
             <label>
-              Enrolled bridge ID
-              <input
-                required
-                minLength={8}
-                value={draft.bridgeId}
-                onChange={(e) => setDraft({ ...draft, bridgeId: e.target.value })}
-                className={inputClass}
-              />
-            </label>
-            <label>
-              Transport
+              How it connects
               <select
                 className={inputClass}
                 value={draft.transport}
@@ -745,47 +726,58 @@ export function PrinterAdministration() {
                   setDraft({ ...draft, transport: e.target.value as "WINDOWS" | "TCP" })
                 }
               >
-                <option value="WINDOWS">Windows spooler (including installed USB)</option>
-                <option value="TCP">Network TCP ESC/POS</option>
+                <option value="WINDOWS">USB, or installed in Windows on a computer</option>
+                <option value="TCP">Network (has its own IP address)</option>
               </select>
             </label>
             {draft.transport === "WINDOWS" ? (
-              <label>
-                Installed printer name
-                <input
-                  required
-                  value={draft.osPrinterName ?? ""}
-                  onChange={(e) => setDraft({ ...draft, osPrinterName: e.target.value })}
-                  className={inputClass}
-                />
-              </label>
+              <div>
+                <label>
+                  Windows printer name
+                  <input
+                    required
+                    value={draft.osPrinterName ?? ""}
+                    onChange={(e) => setDraft({ ...draft, osPrinterName: e.target.value })}
+                    className={inputClass}
+                  />
+                </label>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Exactly as it appears in Windows Printers &amp; scanners.
+                </p>
+              </div>
             ) : (
               <>
                 <label>
-                  Printer host
+                  Printer IP address
                   <input
                     required
                     value={draft.host ?? ""}
+                    placeholder="For example: 192.168.1.50"
                     onChange={(e) => setDraft({ ...draft, host: e.target.value })}
                     className={inputClass}
                   />
                 </label>
-                <label>
-                  TCP port
-                  <input
-                    type="number"
-                    min={1024}
-                    max={65535}
-                    required
-                    value={draft.port}
-                    onChange={(e) => setDraft({ ...draft, port: Number(e.target.value) })}
-                    className={inputClass}
-                  />
-                </label>
+                <div>
+                  <label>
+                    Port
+                    <input
+                      type="number"
+                      min={1024}
+                      max={65535}
+                      required
+                      value={draft.port}
+                      onChange={(e) => setDraft({ ...draft, port: Number(e.target.value) })}
+                      className={inputClass}
+                    />
+                  </label>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Usually 9100. Leave it unless your printer's manual says otherwise.
+                  </p>
+                </div>
               </>
             )}
             <label>
-              Paper
+              Paper width
               <select
                 value={draft.paperWidth}
                 onChange={(e) =>
@@ -793,129 +785,10 @@ export function PrinterAdministration() {
                 }
                 className={inputClass}
               >
-                <option>58mm</option>
-                <option>80mm</option>
+                <option value="58mm">58mm (narrow)</option>
+                <option value="80mm">80mm (standard)</option>
               </select>
             </label>
-            <label>
-              Branch production delivery
-              <select
-                className={inputClass}
-                value={draft.kitchenMode}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    kitchenMode: event.target.value as PrinterConfiguration["kitchenMode"],
-                  })
-                }
-              >
-                <option value="PRINTER_ONLY">Printer only</option>
-                <option value="KDS_ONLY">KDS only</option>
-                <option value="KDS_AND_PRINTER">KDS and printer</option>
-                <option value="NO_DEDICATED_KITCHEN_SYSTEM">Assigned front printer</option>
-              </select>
-            </label>
-            <label>
-              Rendering mode
-              <select
-                className={inputClass}
-                value={draft.renderingMode ?? "TEXT_ESC_POS"}
-                onChange={(event) => {
-                  const renderingMode = event.target.value as "TEXT_ESC_POS" | "RASTER_ESC_POS";
-                  setDraft({
-                    ...draft,
-                    renderingMode,
-                    ...(renderingMode === "RASTER_ESC_POS" && !draft.raster
-                      ? {
-                          emphasis: true,
-                          raster: {
-                            command: "GS_V_0",
-                            printableWidthDots: draft.paperWidth === "58mm" ? 384 : 576,
-                            dpi: 203,
-                            maxBandHeight: 128,
-                            maxHeightDots: 8192,
-                            maxBytes: 524288,
-                          },
-                        }
-                      : {}),
-                  });
-                }}
-              >
-                <option value="TEXT_ESC_POS">Text ESC/POS</option>
-                <option value="RASTER_ESC_POS" disabled={draft.transport !== "TCP"}>
-                  Raster ESC/POS (RAW TCP)
-                </option>
-              </select>
-            </label>
-            {draft.renderingMode !== "RASTER_ESC_POS" && (
-              <label>
-                Table lines
-                <select
-                  className={inputClass}
-                  value={draft.ruleStyle ?? "SOLID"}
-                  onChange={(event) =>
-                    setDraft({ ...draft, ruleStyle: event.target.value as "SOLID" | "ASCII" })
-                  }
-                >
-                  <option value="SOLID">Solid lines (printer box characters)</option>
-                  <option value="ASCII">Plain characters (+ - |)</option>
-                </select>
-              </label>
-            )}
-            {draft.renderingMode === "RASTER_ESC_POS" && draft.raster && (
-              <details className="sm:col-span-2">
-                <summary>Raster capabilities</summary>
-                <div className="grid gap-3 py-3 sm:grid-cols-2">
-                  <label>
-                    Raster command
-                    <input readOnly className={inputClass} value="GS v 0" />
-                  </label>
-                  <label>
-                    Resolution (DPI)
-                    <select
-                      className={inputClass}
-                      value={draft.raster.dpi}
-                      onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          raster: { ...draft.raster!, dpi: Number(e.target.value) as 203 | 300 },
-                        })
-                      }
-                    >
-                      <option value={203}>203</option>
-                      <option value={300}>300</option>
-                    </select>
-                  </label>
-                  {(
-                    [
-                      ["printableWidthDots", "Printable width (dots)", 256, 832, 8],
-                      ["maxBandHeight", "Maximum band height (dots)", 16, 256, 1],
-                      ["maxHeightDots", "Maximum document height (dots)", 256, 32768, 1],
-                      ["maxBytes", "Maximum encoded bytes", 4096, 1048576, 1],
-                    ] as const
-                  ).map(([key, label, min, max, step]) => (
-                    <label key={key}>
-                      {label}
-                      <input
-                        className={inputClass}
-                        type="number"
-                        min={min}
-                        max={max}
-                        step={step}
-                        required
-                        value={draft.raster![key]}
-                        onChange={(e) =>
-                          setDraft({
-                            ...draft,
-                            raster: { ...draft.raster!, [key]: Number(e.target.value) },
-                          })
-                        }
-                      />
-                    </label>
-                  ))}
-                </div>
-              </details>
-            )}
             <label>
               Cutter
               <select
@@ -941,30 +814,15 @@ export function PrinterAdministration() {
                 className={inputClass}
               />
             </label>
-            <label>
-              Approved fallback
-              <select
-                value={draft.fallbackPrinterId ?? ""}
-                onChange={(e) =>
-                  setDraft({ ...draft, fallbackPrinterId: e.target.value || undefined })
-                }
-                className={inputClass}
-              >
-                <option value="">None</option>
-                {printers
-                  .filter((item) => item.id !== draft.id && item.enabled)
-                  .map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-              </select>
-            </label>
-            <fieldset>
-              <legend>Document roles</legend>
-              <div className="flex flex-wrap gap-3">
+            <fieldset className="sm:col-span-2">
+              <legend>What does this printer print?</legend>
+              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-2">
                 {roleOptions.map((role) => (
-                  <label key={role} className="flex items-center gap-2">
+                  <label
+                    key={role}
+                    className="flex items-center gap-2"
+                    title={printerRoleHints[role]}
+                  >
                     <input
                       type="checkbox"
                       checked={draft.roles.includes(role)}
@@ -977,42 +835,233 @@ export function PrinterAdministration() {
                         })
                       }
                     />
-                    {role}
+                    {roleOptionLabel(role)}
                   </label>
                 ))}
               </div>
             </fieldset>
-            <fieldset>
-              <legend>Production stations</legend>
-              <div className="flex flex-wrap gap-3">
-                {stations.map((station) => (
-                  <label key={station.id} className="flex items-center gap-2">
+            {stations.length > 0 && (
+              <fieldset className="sm:col-span-2">
+                <legend>Which kitchen or bar stations?</legend>
+                <p className="text-xs text-muted-foreground">
+                  Tick a station to send its tickets to this printer.
+                </p>
+                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-2">
+                  {stations.map((station) => (
+                    <label key={station.id} className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={draft.stations.includes(station.code)}
+                        onChange={(e) =>
+                          setDraft({
+                            ...draft,
+                            stations: e.target.checked
+                              ? [...draft.stations, station.code]
+                              : draft.stations.filter((value) => value !== station.code),
+                          })
+                        }
+                      />
+                      {station.name}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            )}
+            <div className="sm:col-span-2">
+              <label>
+                This branch sends kitchen orders to
+                <select
+                  className={inputClass}
+                  value={draft.kitchenMode}
+                  onChange={(event) =>
+                    setDraft({
+                      ...draft,
+                      kitchenMode: event.target.value as PrinterConfiguration["kitchenMode"],
+                    })
+                  }
+                >
+                  {(
+                    Object.entries(kitchenModeLabels) as [
+                      PrinterConfiguration["kitchenMode"],
+                      string,
+                    ][]
+                  ).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Applies to the whole branch, not just this printer.
+              </p>
+            </div>
+            <details
+              className="rounded-md border border-border p-3 sm:col-span-2"
+              open={moreSettingsOpen}
+              onToggle={(event) => setMoreSettingsOpen(event.currentTarget.open)}
+            >
+              <summary className="cursor-pointer font-semibold">More printer settings</summary>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label>
+                    Print bridge ID
                     <input
-                      type="checkbox"
-                      checked={draft.stations.includes(station.code)}
-                      onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          stations: e.target.checked
-                            ? [...draft.stations, station.code]
-                            : draft.stations.filter((value) => value !== station.code),
-                        })
-                      }
+                      required
+                      minLength={8}
+                      value={draft.bridgeId}
+                      onChange={(e) => setDraft({ ...draft, bridgeId: e.target.value })}
+                      className={inputClass}
                     />
-                    {station.name}
                   </label>
-                ))}
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    The computer that sends jobs to this printer. Filled in for you when you set up
+                    a printer found on this computer.
+                  </p>
+                </div>
+                <div>
+                  <label>
+                    Backup printer
+                    <select
+                      value={draft.fallbackPrinterId ?? ""}
+                      onChange={(e) =>
+                        setDraft({ ...draft, fallbackPrinterId: e.target.value || undefined })
+                      }
+                      className={inputClass}
+                    >
+                      <option value="">None</option>
+                      {printers
+                        .filter((item) => item.id !== draft.id && item.enabled)
+                        .map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Used if this printer can't be reached.
+                  </p>
+                </div>
+                <label>
+                  Print style
+                  <select
+                    className={inputClass}
+                    value={draft.renderingMode ?? "TEXT_ESC_POS"}
+                    onChange={(event) => {
+                      const renderingMode = event.target.value as "TEXT_ESC_POS" | "RASTER_ESC_POS";
+                      setDraft({
+                        ...draft,
+                        renderingMode,
+                        ...(renderingMode === "RASTER_ESC_POS" && !draft.raster
+                          ? {
+                              emphasis: true,
+                              raster: {
+                                command: "GS_V_0",
+                                printableWidthDots: draft.paperWidth === "58mm" ? 384 : 576,
+                                dpi: 203,
+                                maxBandHeight: 128,
+                                maxHeightDots: 8192,
+                                maxBytes: 524288,
+                              },
+                            }
+                          : {}),
+                      });
+                    }}
+                  >
+                    <option value="TEXT_ESC_POS">Text (works on most printers)</option>
+                    <option value="RASTER_ESC_POS" disabled={draft.transport !== "TCP"}>
+                      Image (network printers only)
+                    </option>
+                  </select>
+                </label>
+                {draft.renderingMode !== "RASTER_ESC_POS" && (
+                  <label>
+                    Table lines
+                    <select
+                      className={inputClass}
+                      value={draft.ruleStyle ?? "SOLID"}
+                      onChange={(event) =>
+                        setDraft({ ...draft, ruleStyle: event.target.value as "SOLID" | "ASCII" })
+                      }
+                    >
+                      <option value="SOLID">Solid lines</option>
+                      <option value="ASCII">
+                        Plain characters (+ - |), if lines print as symbols
+                      </option>
+                    </select>
+                  </label>
+                )}
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={draft.emphasis}
+                    onChange={(e) => setDraft({ ...draft, emphasis: e.target.checked })}
+                  />
+                  Bold heading
+                </label>
+                {draft.renderingMode === "RASTER_ESC_POS" && draft.raster && (
+                  <details className="sm:col-span-2">
+                    <summary className="cursor-pointer">
+                      Image print settings (for technicians)
+                    </summary>
+                    <div className="grid gap-3 py-3 sm:grid-cols-2">
+                      <label>
+                        Raster command
+                        <input readOnly className={inputClass} value="GS v 0" />
+                      </label>
+                      <label>
+                        Resolution (DPI)
+                        <select
+                          className={inputClass}
+                          value={draft.raster.dpi}
+                          onChange={(e) =>
+                            setDraft({
+                              ...draft,
+                              raster: {
+                                ...draft.raster!,
+                                dpi: Number(e.target.value) as 203 | 300,
+                              },
+                            })
+                          }
+                        >
+                          <option value={203}>203</option>
+                          <option value={300}>300</option>
+                        </select>
+                      </label>
+                      {(
+                        [
+                          ["printableWidthDots", "Printable width (dots)", 256, 832, 8],
+                          ["maxBandHeight", "Maximum band height (dots)", 16, 256, 1],
+                          ["maxHeightDots", "Maximum document height (dots)", 256, 32768, 1],
+                          ["maxBytes", "Maximum encoded bytes", 4096, 1048576, 1],
+                        ] as const
+                      ).map(([key, label, min, max, step]) => (
+                        <label key={key}>
+                          {label}
+                          <input
+                            className={inputClass}
+                            type="number"
+                            min={min}
+                            max={max}
+                            step={step}
+                            required
+                            value={draft.raster![key]}
+                            onChange={(e) =>
+                              setDraft({
+                                ...draft,
+                                raster: { ...draft.raster!, [key]: Number(e.target.value) },
+                              })
+                            }
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </details>
+                )}
               </div>
-            </fieldset>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={draft.emphasis}
-                onChange={(e) => setDraft({ ...draft, emphasis: e.target.checked })}
-              />
-              Emphasized heading
-            </label>
-            <div className="flex gap-2">
+            </details>
+            <div className="flex gap-2 sm:col-span-2">
               <Btn type="submit" disabled={busy}>
                 <Save className="h-4 w-4" />
                 Save printer
@@ -1024,51 +1073,131 @@ export function PrinterAdministration() {
         {mayManage && (
           <details className="border-t border-border pt-4 text-sm">
             <summary className="cursor-pointer text-muted-foreground">
-              Advanced: manual bridge connection
+              Troubleshooting (for technicians)
             </summary>
-            <form
-              className="mt-3 grid gap-3 sm:grid-cols-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                saveInstalledPrintBridgeConfig(bridge);
-                setNotice("Local bridge connection saved.");
-              }}
-            >
-              <label>
-                Local bridge endpoint
-                <input
-                  required
-                  type="url"
-                  value={bridge.endpoint}
-                  onChange={(e) => setBridge({ ...bridge, endpoint: e.target.value })}
-                  className={inputClass}
-                />
-              </label>
-              <label>
-                Local bridge token
-                <input
-                  required
-                  type="password"
-                  autoComplete="off"
-                  minLength={32}
-                  value={bridge.token}
-                  onChange={(e) => setBridge({ ...bridge, token: e.target.value })}
-                  className={inputClass}
-                />
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={bridge.enabled}
-                  onChange={(e) => setBridge({ ...bridge, enabled: e.target.checked })}
-                />
-                Enable installed bridge
-              </label>
-              <Btn type="submit">
-                <Save className="h-4 w-4" />
-                Save local connection
-              </Btn>
-            </form>
+            <div className="mt-3 space-y-4">
+              <section className="space-y-2">
+                <h3 className="font-semibold">Print queue on this computer</h3>
+                <Btn disabled={!bridge.enabled || busy} onClick={() => void inspectQueue()}>
+                  <RefreshCw className="h-4 w-4" />
+                  Check print queue
+                </Btn>
+                {attempts.length > 0 && (
+                  <div className="max-h-64 overflow-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead>
+                        <tr>
+                          <th>Updated</th>
+                          <th>Status</th>
+                          <th>Details</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {attempts.map((attempt) => (
+                          <tr key={attempt.id} title={`Job ${attempt.id}`}>
+                            <td className="py-2">
+                              {Number.isNaN(Date.parse(attempt.updated_at))
+                                ? attempt.updated_at
+                                : new Date(attempt.updated_at).toLocaleString()}
+                            </td>
+                            <td>{bridgeStageLabel(attempt.stage)}</td>
+                            <td className="text-muted-foreground">{attempt.outcome}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+              {printers.length > 0 && (
+                <section className="space-y-2">
+                  <h3 className="font-semibold">Extra tests and setup files</h3>
+                  {printers.map((printer) => (
+                    <div
+                      key={printer.id}
+                      className="flex flex-wrap items-center justify-between gap-2 border-t border-border py-2"
+                    >
+                      <span>{printer.name}</span>
+                      <div className="flex flex-wrap gap-2">
+                        <Btn
+                          disabled={busy || !printer.enabled}
+                          onClick={() => void testPrinter(printer, "BILL", "TEXT_ESC_POS")}
+                        >
+                          <Printer className="h-4 w-4" />
+                          Test text print
+                        </Btn>
+                        {printer.transport === "TCP" && printer.raster && (
+                          <Btn
+                            disabled={busy || !printer.enabled}
+                            onClick={() => void testPrinter(printer, "BILL", "RASTER_ESC_POS")}
+                          >
+                            <Printer className="h-4 w-4" />
+                            Test image print
+                          </Btn>
+                        )}
+                        <Btn
+                          disabled={busy || !printer.enabled}
+                          onClick={() => void enroll(printer)}
+                          title="Download a setup file for a print bridge installed by hand"
+                        >
+                          <Download className="h-4 w-4" />
+                          Bridge setup file
+                        </Btn>
+                      </div>
+                    </div>
+                  ))}
+                </section>
+              )}
+              <section className="space-y-2">
+                <h3 className="font-semibold">Connect the print bridge by hand</h3>
+                <p className="text-muted-foreground">
+                  Only needed if Connect this PC doesn't work.
+                </p>
+                <form
+                  className="grid gap-3 sm:grid-cols-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    saveInstalledPrintBridgeConfig(bridge);
+                    setNotice("Print bridge connection saved.");
+                  }}
+                >
+                  <label>
+                    Local bridge endpoint
+                    <input
+                      required
+                      type="url"
+                      value={bridge.endpoint}
+                      onChange={(e) => setBridge({ ...bridge, endpoint: e.target.value })}
+                      className={inputClass}
+                    />
+                  </label>
+                  <label>
+                    Local bridge token
+                    <input
+                      required
+                      type="password"
+                      autoComplete="off"
+                      minLength={32}
+                      value={bridge.token}
+                      onChange={(e) => setBridge({ ...bridge, token: e.target.value })}
+                      className={inputClass}
+                    />
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={bridge.enabled}
+                      onChange={(e) => setBridge({ ...bridge, enabled: e.target.checked })}
+                    />
+                    Enable installed bridge
+                  </label>
+                  <Btn type="submit">
+                    <Save className="h-4 w-4" />
+                    Save local connection
+                  </Btn>
+                </form>
+              </section>
+            </div>
           </details>
         )}
       </div>

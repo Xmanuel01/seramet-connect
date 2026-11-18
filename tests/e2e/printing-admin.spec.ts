@@ -70,13 +70,17 @@ test("authenticated owner configures TCP, submits a signed diagnostic and cannot
     await page.goto("/seramet-printers");
     await page.getByRole("button", { name: "Add printer", exact: true }).click();
     await page.getByLabel("Name", { exact: true }).fill("Disposable TCP printer");
-    await page.getByLabel("Enrolled bridge ID").fill(bridgeId);
-    await page.getByRole("combobox", { name: "Transport", exact: true }).selectOption("TCP");
-    await page.getByLabel("Printer host").fill("127.0.0.1");
-    await page.getByLabel("TCP port").fill(String((tcp.address() as { port: number }).port));
+    if (!(await page.getByLabel("Print bridge ID").isVisible()))
+      await page.getByText("More printer settings", { exact: true }).click();
+    await page.getByLabel("Print bridge ID").fill(bridgeId);
+    await page.getByRole("combobox", { name: "How it connects", exact: true }).selectOption("TCP");
+    await page.getByLabel("Printer IP address", { exact: true }).fill("127.0.0.1");
+    await page
+      .getByLabel("Port", { exact: true })
+      .fill(String((tcp.address() as { port: number }).port));
     await page.getByRole("button", { name: "Save printer", exact: true }).click();
-    await expect(page.getByRole("status")).toContainText("Printer configuration saved");
-    await page.getByText("Advanced: manual bridge connection", { exact: true }).click();
+    await expect(page.getByRole("status")).toContainText("Printer saved");
+    await page.getByText("Troubleshooting (for technicians)", { exact: true }).click();
     await page
       .getByLabel("Local bridge endpoint")
       .fill(`http://127.0.0.1:${bridge.server.address().port}`);
@@ -85,9 +89,7 @@ test("authenticated owner configures TCP, submits a signed diagnostic and cannot
     await page.getByRole("button", { name: "Save local connection", exact: true }).click();
     await page.getByRole("button", { name: "Test receipt", exact: true }).click();
     await expect(
-      page
-        .getByRole("status")
-        .filter({ hasText: "Transport submitted; physical delivery unconfirmed" }),
+      page.getByRole("status").filter({ hasText: "Sent to the printer. Check that it printed." }),
     ).toBeVisible();
     // The test receipt is the real receipt template under a diagnostic banner.
     await expect
@@ -95,7 +97,9 @@ test("authenticated owner configures TCP, submits a signed diagnostic and cannot
       .toContain("PRINTER TEST - NOT A SALE");
     expect(Buffer.concat(chunks).toString("ascii")).toContain("RECEIPT");
     await page.getByRole("button", { name: "Check print queue", exact: true }).click();
-    await expect(page.getByText("BYTES_SUBMITTED", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("cell", { name: "Sent to printer", exact: true }).first(),
+    ).toBeVisible();
     const denied = await page.evaluate(
       async ({ branchId }) => {
         const response = await fetch("/api/seramet/printing/printers", {
@@ -117,7 +121,9 @@ test("authenticated owner configures TCP, submits a signed diagnostic and cannot
     expect(denied).toBe(403);
     await page.reload();
     await expect(
-      page.getByRole("cell", { name: "Disposable TCP printer", exact: true }),
+      page
+        .getByRole("table", { name: "Your printers" })
+        .getByRole("cell", { name: "Disposable TCP printer", exact: true }),
     ).toBeVisible();
     await mkdir(resolve(".seramet/printing-acceptance"), { recursive: true });
     await page.screenshot({
