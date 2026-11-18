@@ -141,15 +141,31 @@ function KDS() {
     const next = nextForwardKitchenState(ticket.state);
     if (!hasKdsWorkflow || !next) return;
     setNotice("");
-    try {
-      await mutate("setProductionStationStatus", {
+    const send = () =>
+      mutate("setProductionStationStatus", {
         orderId: ticket.orderId,
         station: ticket.station,
         status: next,
       });
+    let failure: unknown;
+    try {
+      await send();
+      return;
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Kitchen status could not be updated");
+      failure = error;
     }
+    // A conflict usually means something else in the restaurant changed (another order,
+    // a printed ticket). The hook has already loaded the latest state, and the command
+    // names the target status, so one retry is safe and spares the chef a second tap.
+    if ((failure as { httpStatus?: number }).httpStatus === 409) {
+      try {
+        await send();
+        return;
+      } catch (error) {
+        failure = error;
+      }
+    }
+    setNotice(failure instanceof Error ? failure.message : "Kitchen status could not be updated");
   };
 
   const recallTicket = async (ticket: KitchenTicket) => {
