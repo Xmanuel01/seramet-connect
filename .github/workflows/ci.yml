@@ -24,8 +24,9 @@ jobs:
         run: node --test scripts/main-branch-protection.test.mjs scripts/solo-release-approval.test.mjs
       - run: npm ci
       - run: npm ls --all
-      - run: npm audit --omit=dev --audit-level=high
-      - name: Audit dependencies (moderate+, dated dev-only exceptions)
+      # Covers production and development dependencies at moderate and above; the only
+      # exceptions are dated ones in scripts/audit-exceptions.json.
+      - name: Audit dependencies (moderate+, dated exceptions)
         run: node --test scripts/audit-dependencies.test.mjs && node scripts/audit-dependencies.mjs
       - run: npm run typecheck
       - name: Typecheck scanner against the actual Cloudflare runtime API
