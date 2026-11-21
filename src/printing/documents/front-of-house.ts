@@ -20,6 +20,7 @@ import {
   businessHeader,
   computeSaleTotals,
   copyLine,
+  currency,
   currencyNote,
   etimsBlock,
   footer,
@@ -101,17 +102,15 @@ export function renderProductionTicket(
     // First line prints bold; the title also matches printing-core's strong titles.
     spread(title, `${ticketPrefix(input.station)} ${input.ticketNumber}`, width),
     copyLine(ctx, width),
+    spread(input.table ? `Table ${input.table}` : input.orderType, `Order ${input.orderNumber}`, width),
     grid(width, [
-      input.table && `Table ${input.table}`,
-      input.covers !== undefined && `Covers ${input.covers}`,
-      `Order ${input.orderNumber}`,
-      `${input.orderType}${input.round ? ` / Round ${input.round}` : ""}`,
-      input.server && `Server ${input.server}`,
+      input.table && input.orderType,
       input.stationName && `Station ${input.stationName}`,
-      input.branch && `Branch ${input.branch}`,
-      input.sentBy && `Sent by ${input.sentBy}`,
-      input.via && `Via ${input.via}`,
+      input.round !== undefined && `Round ${input.round}`,
+      input.covers !== undefined && `Covers ${input.covers}`,
+      `Printed ${input.printedAt}`,
     ]),
+    input.note && box(width, [`SPECIAL REQUEST: ${input.note}`]),
     table(
       width,
       [{ width: 4, align: "right" }, { min: 10 }],
@@ -125,8 +124,13 @@ export function renderProductionTicket(
       ]),
       { header: ["Qty", bar ? "Drink" : "Item"], rowRules: true },
     ),
-    input.note && box(width, [`SPECIAL REQUEST: ${input.note}`]),
-    spread(itemCount(input.lines), `Printed ${input.printedAt}`, width),
+    grid(width, [
+      input.server && `Server ${input.server}`,
+      input.sentBy && `Sent by ${input.sentBy}`,
+      input.branch && `Branch ${input.branch}`,
+      input.via && `Via ${input.via}`,
+    ]),
+    centered(itemCount(input.lines), width),
   ]);
   const kind = bar ? "BOT" : input.station === "DISPATCH" ? "DISPATCH_TICKET" : "KOT";
   return { kind, paper: ctx.paper, content, qrCodes: [] };
@@ -419,6 +423,7 @@ export function renderSalesReceipt(input: SalesReceiptInput, ctx: PrintContext):
   const content = compose(width, [
     businessHeader(input.business, width),
     titleBar("RECEIPT", width, paid >= totals.total ? "PAID" : undefined),
+    centered(`${currency(ctx)} ${money(totals.total)}`, width),
     copyLine(ctx, width),
     grid(width, [
       `Receipt ${input.receiptNumber}`,
@@ -427,8 +432,6 @@ export function renderSalesReceipt(input: SalesReceiptInput, ctx: PrintContext):
       input.orderNumber && `Order ${input.orderNumber}`,
       input.orderType,
       input.table && `Table ${input.table}`,
-      input.server && `Served by ${input.server}`,
-      input.cashier && `Cashier ${input.cashier}`,
     ]),
     customerFields(width, input.customer),
     deliveryFields(width, input.deliveryDetails),
@@ -436,6 +439,10 @@ export function renderSalesReceipt(input: SalesReceiptInput, ctx: PrintContext):
     saleTotalsTable(width, totals, ctx),
     paymentsTable(width, input.payments, change),
     paid < totals.total && box(width, [`BALANCE DUE ${money(sum([totals.total, -paid]))}`]),
+    grid(width, [
+      input.server && `Served by ${input.server}`,
+      input.cashier && `Cashier ${input.cashier}`,
+    ]),
     loyaltyFields(width, input.loyalty),
     footer(width, input.footerMessage ?? "Thank you!", vatNote),
     etimsBlock(width, input.etims, qrCodes),
@@ -524,6 +531,14 @@ export function renderTaxInvoice(input: TaxInvoiceInput, ctx: PrintContext): Pri
     businessHeader(input.business, width),
     titleBar(input.tax.vatRegistered ? "TAX INVOICE" : "INVOICE", width),
     copyLine(ctx, width),
+    box(width, [
+      balance > 0
+        ? `BALANCE DUE  ${currency(ctx)} ${money(balance)}`
+        : balance < 0
+          ? `CREDIT  ${currency(ctx)} ${money(-balance)}`
+          : "PAID IN FULL",
+      ...(balance > 0 && input.dueDate ? [`Due ${input.dueDate}`] : []),
+    ]),
     fieldPanels(
       width,
       [
@@ -560,7 +575,7 @@ export function renderTaxInvoice(input: TaxInvoiceInput, ctx: PrintContext): Pri
       ...levyRows(totals),
       ["TOTAL", money(totals.total)],
       paid !== 0 && ["Paid to date", `(${money(paid)})`],
-      paid !== 0 && ["BALANCE DUE", money(balance)],
+      paid !== 0 && [balance < 0 ? "Credit" : "BALANCE DUE", money(Math.abs(balance))],
     ]),
     currencyNote(width, ctx),
     input.payments && input.payments.length > 0 && paymentsTable(width, input.payments),
