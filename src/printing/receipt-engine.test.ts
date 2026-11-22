@@ -184,10 +184,12 @@ describe("printed totals and payments", () => {
       },
       guest,
     );
-    expect(content).toMatch(/\|Subtotal\s+\|\s+2,980\.00\|/);
-    expect(content).toMatch(/\|Service charge\s+\|\s+278\.00\|/);
-    expect(content).toMatch(/\|Discount\s+\|\s+\(200\.00\)\|/);
-    expect(content).toMatch(/\|TOTAL\s+\|\s+3,058\.00\|/);
+    expect(content).toMatch(/^\s+SUBTOTAL\s+2,980\.00$/m);
+    expect(content).toMatch(/^\s+SERVICE CHARGE\s+278\.00$/m);
+    expect(content).toMatch(/^\s+DISCOUNT\s+\(200\.00\)$/m);
+    expect(content).toMatch(/^GRAND TOTAL\s+KES 3,058\.00$/m);
+    // No tax was charged, so no VAT row is printed.
+    expect(content).not.toMatch(/\bVAT\b/);
   });
 
   it("prints the cash handed over and the change returned", () => {
@@ -196,10 +198,11 @@ describe("printed totals and payments", () => {
       change: 2020,
       paymentBreakdown: [{ method: "CASH", amount: 2980, reference: "CASH-INV-00490-1" }],
     });
-    expect(content).toMatch(/\|CASH\s+\|\s*\|\s+5,000\.00\|/);
-    expect(content).toMatch(/\|Change\s+\|\s*\|\s+2,020\.00\|/);
+    expect(content).toMatch(/^Method: CASH\nAmount Paid: KES 5,000\.00$/m);
+    expect(content).toMatch(/^Change: KES 2,020\.00$/m);
     expect(content).not.toContain("CASH-INV");
-    expect(content).toContain("PAID");
+    expect(content).not.toContain("Reference");
+    expect(content).toMatch(/^RECEIPT\s+\[ PAID \]$/m);
   });
 
   it("keeps mixed payments as recorded, with their references", () => {
@@ -210,9 +213,11 @@ describe("printed totals and payments", () => {
         { method: "CASH", amount: 980, reference: "CASH-INV-00490-2" },
       ],
     });
-    expect(content).toMatch(/\|MPESA\s+\|SKL4Q7ZP9X\s+\|\s+2,000\.00\|/);
-    expect(content).toMatch(/\|CASH\s+\|\s*\|\s+980\.00\|/);
+    expect(content).toMatch(
+      /^Method: MPESA\nReference: SKL4Q7ZP9X\nAmount Paid: KES 2,000\.00\n\nMethod: CASH\nAmount Paid: KES 980\.00$/m,
+    );
     expect(content).not.toContain("Change");
+    expect(content).not.toContain("Balance Due");
   });
 
   it("titles dispatch-station tickets as dispatch orders on the station template", () => {

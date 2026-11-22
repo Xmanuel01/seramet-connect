@@ -767,8 +767,8 @@ it("authorizes only the exact claimed immutable station obligation and renders i
     JSON.parse(Buffer.from(result.authorization.payload, "base64url").toString("utf8"));
   expect(decode(first).content).toBe(decode(second).content);
   expect(decode(first).id).toBe(`${obligationId}:0`);
-  expect(decode(first).content).toMatch(/\|\s*2\|PERSISTED MEAL/);
-  expect(decode(first).content).toContain("NO SALT");
+  expect(decode(first).content).toMatch(/^2 x Persisted meal$/im);
+  expect(decode(first).content.toUpperCase()).toContain("NO SALT");
   await handlePrintingApi(
     request("consume", { authorization: first.authorization }),
     env(),
@@ -828,9 +828,9 @@ it("authorizes only the exact claimed immutable station obligation and renders i
     repository,
   ))!.json();
   const text = decode(reprint).content.replace(/\s+/g, " ");
-  expect(text).toContain("REPRINT");
-  expect(text).toContain("by Reviewing manager");
-  expect(text).not.toContain(`by ${state.orders[0]!.cashier}`);
+  expect(decode(reprint).content.split("\n")[1]).toMatch(/^REPRINT\s+KITCHEN$/);
+  expect(text).toContain("REQUESTED BY: Reviewing manager");
+  expect(text).not.toContain(`BY: ${state.orders[0]!.cashier}`);
 });
 
 it("derives a separate print signing master when no explicit key is configured", async () => {

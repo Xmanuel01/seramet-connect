@@ -891,6 +891,7 @@ export async function handlePrintingApi(
       waiter: order.waiter ?? order.cashier,
       createdAt: obligation.createdAt,
       ...(order.table ? { table: order.table } : {}),
+      ...(order.customer ? { customer: order.customer } : {}),
       ...(order.kitchenNote ? { kitchenNote: order.kitchenNote } : {}),
       lines: obligation.lines.map((line) => ({
         ...line,

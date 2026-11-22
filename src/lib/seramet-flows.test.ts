@@ -584,20 +584,20 @@ describe("Seramet POS acceptance scenarios", () => {
     );
 
     [
-      "Mona Swahili",
-      "RECEIPT",
-      "RCP #T-100",
-      "Order #T-100",
-      "Cashier Amina W.",
-      "Chicken Biryani",
-      "No ice",
-      "Subtotal",
-      "VAT",
-      "TOTAL",
-      "PAID",
-      "M-Pesa",
-      "TH7XXXXXXX",
-      profileForMode("PRINTER_ONLY").printIdentity.footerMessage,
+      "MONA SWAHILI",
+      "RECEIPT [ PAID ]",
+      "RCPT #T-100",
+      "TABLE: 08",
+      "Passion Juice",
+      "- No ice",
+      "SUBTOTAL 1,850.00",
+      "VAT 296.00",
+      "GRAND TOTAL KES 2,146.00",
+      "PAYMENT DETAILS",
+      "Method: M-Pesa",
+      "Reference: TH7XXXXXXX",
+      "Change: KES 354.00",
+      "THANK YOU FOR YOUR BUSINESS",
     ].forEach((text) => {
       // Table cells wrap, so compare with cell borders and line breaks collapsed.
       expect(receipt.content.replace(/[\s|]+/g, " ")).toContain(text);
@@ -615,17 +615,31 @@ describe("Seramet POS acceptance scenarios", () => {
     const kot = production.jobs.find((job) => job.documentType === "FOOD_KOT");
     const bar = production.jobs.find((job) => job.documentType === "BAR_TICKET");
 
-    expect(kot?.content).toContain("KITCHEN ORDER");
-    expect(kot?.content).toContain("KOT #T-100");
-    expect(kot?.content).toMatch(/\|\s*1\|CHICKEN BIRYANI/);
-    expect(kot?.content).toContain("NOTE: EXTRA GRAVY");
-    expect(kot?.content).toContain("SPECIAL REQUEST");
-    expect(kot?.content.replace(/[\s|]+/g, " ")).toContain("No chilli on one biryani");
-    expect(kot?.content).not.toContain("KSh");
-    expect(bar?.content).toContain("BAR ORDER");
-    expect(bar?.content).toMatch(/\|\s*2\|PASSION JUICE/);
-    expect(bar?.content).toContain("NO ICE");
+    expect(kot?.content.split("\n")[0]!.trim()).toBe("KITCHEN ORDER");
+    expect(kot?.content).toMatch(/^NEW ORDER\s+KITCHEN$/m);
+    expect(kot?.content).toContain("ORDER #T-100");
+    expect(kot?.content).toContain("TABLE: 08");
+    // The item's instruction sits directly under it; the order's under all items.
+    expect(kot?.content).toMatch(/^1 x Chicken Biryani\n {4}Item instructions: Extra gravy$/m);
+    const flatKot = kot!.content.replace(/[\s|]+/g, " ");
+    expect(kot?.content).toMatch(/GENERAL INSTRUCTIONS\n\+-+\+\n\|\s+No chilli on one biryani/);
+    expect(flatKot).toContain("Serve all meals together.");
+    expect(kot!.content.indexOf("GENERAL INSTRUCTIONS")).toBeGreaterThan(
+      kot!.content.indexOf("Chicken Biryani"),
+    );
+    expect(kot?.content).toContain("REQUESTED BY: Amina W.");
+    expect(kot?.content).toMatch(/END OF KITCHEN ORDER$/);
+    for (const price of ["KSh", "KES", "1,250.00", "2,146.00", "Mona Swahili", "MONA SWAHILI"])
+      expect(kot?.content).not.toContain(price);
+    expect(kot?.content).not.toContain("Passion Juice");
+    expect(bar?.content.split("\n")[0]!.trim()).toBe("BAR ORDER");
+    expect(bar?.content).toMatch(/^NEW ORDER\s+BAR$/m);
+    expect(bar?.content).toMatch(
+      /^2 x Passion Juice\n {4}- No ice\n {4}Item instructions: One glass room$/m,
+    );
+    expect(bar?.content).toContain("END OF BAR ORDER");
     expect(bar?.content).not.toContain("Chicken Biryani");
+    expect(bar?.content).not.toContain("300.00");
   });
 
   it("renders unpaid bills, paid receipts and A4 invoices as separate document types", () => {
@@ -643,15 +657,19 @@ describe("Seramet POS acceptance scenarios", () => {
     );
     const invoice = SerametPrintService.createDocumentJob(profile, order, "INVOICE");
 
-    expect(bill.content).toContain("BILL");
-    expect(bill.content).toContain("Not a receipt");
-    expect(bill.content).not.toContain("PAID");
-    expect(receipt.content).toContain("RECEIPT");
-    expect(receipt.content).toContain("PAID");
-    expect(receipt.content).toContain("M-Pesa");
+    // The customer bill prints the approved INVOICE layout, with no PAID or UNPAID label.
+    // The demo profile prints invoices on A4, which keeps the tax-invoice layout.
+    expect(profile.templateSettings.INVOICE.width).toBe("A4");
     expect(invoice.content).toContain("TAX INVOICE");
-    expect(invoice.content).toMatch(/PAY WITH M-PESA|Bank|PAYMENT OPTIONS/);
-    expect(invoice.content).toContain("Prepared by");
+    for (const unpaid of [bill.content]) {
+      expect(unpaid.split("\n").some((line) => line.trim() === "INVOICE")).toBe(true);
+      expect(unpaid).not.toMatch(/\bPAID\b/);
+      expect(unpaid).not.toContain("RECEIPT");
+      expect(unpaid).toMatch(/^GRAND TOTAL\s+KES 2,146\.00$/m);
+    }
+    expect(receipt.content).toMatch(/^RECEIPT\s+\[ PAID \]$/m);
+    expect(receipt.content).toContain("Method: M-Pesa");
+    expect(receipt.content).not.toMatch(/^\s*INVOICE$/m);
   });
 
   it("marks addition, cancelled item and duplicate production tickets clearly", () => {
@@ -670,12 +688,14 @@ describe("Seramet POS acceptance scenarios", () => {
       [],
     );
 
-    expect(addition?.content).toContain("ORDER CHANGE");
-    expect(addition?.content).toMatch(/\|ADD\s*\|\s*\+1\|CHICKEN BIRYANI/);
-    expect(cancelled?.content).toContain("VOID - DO NOT PREPARE");
-    expect(cancelled?.content).toMatch(/\|\s*-1\|CHICKEN BIRYANI - CANCELLED/);
+    expect(addition?.content).toMatch(/^ADDED ITEMS\s+KITCHEN$/m);
+    expect(addition?.content).toContain("1 x Chicken Biryani");
+    expect(cancelled?.content).toMatch(/^CANCELLED\s+KITCHEN$/m);
+    expect(cancelled?.content).toContain("DO NOT PREPARE THESE ITEMS");
+    expect(cancelled?.content).toContain("1 x Chicken Biryani");
     // No recorded reason: the line prints blank to fill in, never invented text.
-    expect(cancelled?.content).toMatch(/^\|Reason\s*\|\s+\|$/m);
+    expect(cancelled?.content).toMatch(/^REASON: _+$/m);
+    expect(cancelled?.content).toMatch(/^APPROVED BY: _+$/m);
     expect(reprint.job?.content).toContain("DUPLICATE COPY");
     expect(reprint.job?.reprintOfJobId).toBe(original.id);
     expect(reprint.log.reason).toBe("Customer requested copy");
