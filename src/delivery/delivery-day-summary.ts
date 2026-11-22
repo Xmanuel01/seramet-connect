@@ -1,7 +1,8 @@
 import type { TransactionState } from "@/lib/transaction-engine";
 import { businessDateForTimestamp } from "@/lib/business-date";
-import { allocateInvoiceMinor, verifyInvoiceComponents } from "@/payments/invoice-components";
+import { verifyInvoiceComponents } from "@/payments/invoice-components";
 import { sumMinor } from "@/payments/money";
+import { invoiceDeliveryAllocations } from "./invoice-delivery-allocations";
 
 export type DeliveryDaySummary = {
   chargedMinor: number;
@@ -68,7 +69,12 @@ export function deliveryDaySummary(
     if (matches.length === 1) return { name, riderId: matches[0]!.id };
     return { name: matches.length > 1 ? `${name} (identity unresolved)` : name };
   };
-  for (const bill of state.bills) {
+  const scopedBills = state.bills.filter(
+    (bill) =>
+      (bill.tenantId ?? state.tenantId) === scope.tenantId && bill.branchId === scope.branchId,
+  );
+  const allocationsFor = invoiceDeliveryAllocations(scopedBills, scopedOrders, scope.currency);
+  for (const bill of scopedBills) {
     if (
       (bill.tenantId ?? state.tenantId) !== scope.tenantId ||
       bill.branchId !== scope.branchId ||
@@ -93,34 +99,15 @@ export function deliveryDaySummary(
     summary.chargedMinor = sumMinor([summary.chargedMinor, charged]);
     summary.riderPayableMinor = sumMinor([summary.riderPayableMinor, payable]);
     summary.businessRevenueMinor = sumMinor([summary.businessRevenueMinor, charged - payable]);
-    const feeOrders = orders.filter((order) => (order.delivery?.charge?.amountMinor ?? 0) > 0);
-    const candidates: { name: string; riderId?: string; weight: number; payableWeight: number }[] =
-      feeOrders.length
-        ? feeOrders.map((order) => ({
-            ...riderIdentity(order),
-            weight: order.delivery!.charge!.amountMinor,
-            payableWeight:
-              order.delivery!.charge!.beneficiary === "RIDER"
-                ? order.delivery!.charge!.amountMinor
-                : 0,
-          }))
-        : [{ name: "Unassigned", weight: charged, payableWeight: payable }];
-    const charges = allocateInvoiceMinor(
-      charged,
-      candidates.map((row) => row.weight),
-    );
-    // A mixed merged invoice must never assign business-owned fees to a rider.
-    const payableWeights = candidates.map((row) => row.payableWeight);
-    const payables =
-      sumMinor(payableWeights) > 0
-        ? allocateInvoiceMinor(payable, payableWeights)
-        : candidates.map(() => 0);
-    if (payable > 0 && sumMinor(payableWeights) === 0) {
-      candidates.push({ name: "Unassigned", weight: 0, payableWeight: payable });
-      charges.push(0);
-      payables.push(payable);
-    }
-    candidates.forEach((candidate, index) => {
+    const allocations = allocationsFor(bill);
+    if (!allocations) summary.unclassifiedInvoiceIds.push(bill.id);
+    (
+      allocations ?? [
+        { orderId: undefined, payableMinor: payable, businessMinor: charged - payable },
+      ]
+    ).forEach((allocation) => {
+      const order = allocation.orderId ? scopedOrders.get(allocation.orderId) : undefined;
+      const candidate = order ? riderIdentity(order) : { name: "Unassigned", riderId: undefined };
       const row = summary.riders.find((entry) =>
         candidate.riderId
           ? entry.riderId === candidate.riderId
@@ -133,8 +120,12 @@ export function deliveryDaySummary(
         invoiceIds: [],
       };
       if (!summary.riders.includes(row)) summary.riders.push(row);
-      row.chargedMinor = sumMinor([row.chargedMinor, charges[index]!]);
-      row.payableMinor = sumMinor([row.payableMinor, payables[index]!]);
+      row.chargedMinor = sumMinor([
+        row.chargedMinor,
+        allocation.payableMinor,
+        allocation.businessMinor,
+      ]);
+      row.payableMinor = sumMinor([row.payableMinor, allocation.payableMinor]);
       if (!row.invoiceIds.includes(bill.id)) row.invoiceIds.push(bill.id);
     });
   }

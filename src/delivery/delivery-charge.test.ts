@@ -326,6 +326,141 @@ describe("channel-configured rider delivery", () => {
     ]);
     expect(deliveryDaySummary(state, scope).riders[0]!.riderId).toBeUndefined();
   });
+  it("preserves each rider's fee when a split child is merged with another order", () => {
+    let state = createEmptyTransactionState(tenantId);
+    const bills: string[] = [];
+    for (const rider of ["Rider A", "Rider B"]) {
+      state = TransactionEngine.createOrder(
+        state,
+        { ...draft(), delivery: { ...draft().delivery!, rider } },
+        "HELD",
+      );
+      state = TransactionEngine.createOpenBill(state, state.orders[0]!.id);
+      bills.push(state.bills[0]!.id);
+    }
+    state = TransactionEngine.splitBill(
+      state,
+      bills[0]!,
+      [
+        { label: "A1", amount: 525 },
+        { label: "A2", amount: 525 },
+      ],
+      actor.name,
+    );
+    state = TransactionEngine.mergeBills(
+      state,
+      [state.bills[0]!.id, bills[1]!],
+      actor.name,
+      "Merge split child",
+    );
+    state.bills.forEach((bill) => {
+      bill.businessDate = scope.businessDate;
+    });
+    const result = deliveryDaySummary(state, scope);
+    expect(result.riderPayableMinor).toBe(30000);
+    expect(result.riders.map(({ name, payableMinor }) => ({ name, payableMinor }))).toEqual([
+      { name: "Rider A", payableMinor: 15000 },
+      { name: "Rider B", payableMinor: 15000 },
+    ]);
+  });
+  it("conserves odd minor units through merge, split and another merge", () => {
+    let state = createEmptyTransactionState(tenantId);
+    const bills: string[] = [];
+    for (const [rider, amountMinor] of [
+      ["Rider A", 15001],
+      ["Rider B", 15002],
+      ["Rider C", 15003],
+    ] as const) {
+      state = TransactionEngine.createOrder(
+        state,
+        {
+          ...draft(),
+          delivery: { ...draft().delivery!, rider, charge: { ...charge, amountMinor } },
+        },
+        "HELD",
+      );
+      state = TransactionEngine.createOpenBill(state, state.orders[0]!.id);
+      bills.push(state.bills[0]!.id);
+    }
+    state = TransactionEngine.mergeBills(state, bills.slice(0, 2), actor.name, "Merge A and B");
+    const merged = state.bills[0]!;
+    state = TransactionEngine.splitBill(
+      state,
+      merged.id,
+      [
+        { label: "Part 1", amount: 1000.01 },
+        { label: "Part 2", amount: 1100.02 },
+      ],
+      actor.name,
+    );
+    state = TransactionEngine.mergeBills(
+      state,
+      [state.bills[0]!.id, bills[2]!],
+      actor.name,
+      "Merge child with C",
+    );
+    state.bills.forEach((bill) => {
+      bill.businessDate = scope.businessDate;
+    });
+    const result = deliveryDaySummary(state, scope);
+    expect(result.unclassifiedInvoiceIds).toEqual([]);
+    expect(result.riderPayableMinor).toBe(45006);
+    expect(result.riders.map(({ name, payableMinor }) => ({ name, payableMinor }))).toEqual([
+      { name: "Rider A", payableMinor: 15001 },
+      { name: "Rider B", payableMinor: 15002 },
+      { name: "Rider C", payableMinor: 15003 },
+    ]);
+  });
+  it("can merge a delivery invoice with an invoice without a delivery fee", () => {
+    let state = createEmptyTransactionState(tenantId);
+    for (const delivery of [{ ...draft().delivery!, rider: "Rider A" }, undefined]) {
+      state = TransactionEngine.createOrder(state, { ...draft(), delivery }, "HELD");
+      state = TransactionEngine.createOpenBill(state, state.orders[0]!.id);
+    }
+    state = TransactionEngine.mergeBills(
+      state,
+      state.bills.map((bill) => bill.id),
+      actor.name,
+      "Merge",
+    );
+    state.bills.forEach((bill) => {
+      bill.businessDate = scope.businessDate;
+    });
+    expect(deliveryDaySummary(state, scope)).toMatchObject({
+      chargedMinor: 15000,
+      riderPayableMinor: 15000,
+      unclassifiedInvoiceIds: [],
+      riders: [{ name: "Rider A", payableMinor: 15000 }],
+    });
+  });
+  it.each(["missing", "cycle", "other-tenant", "other-branch"])(
+    "flags %s invoice lineage without guessing a rider",
+    (kind) => {
+      let state = TransactionEngine.createOrder(
+        createEmptyTransactionState(tenantId),
+        draft(),
+        "HELD",
+      );
+      state = TransactionEngine.createOpenBill(state, state.orders[0]!.id);
+      const bill = state.bills[0]!;
+      bill.businessDate = scope.businessDate;
+      bill.sourceBillIds = [kind === "cycle" ? bill.id : "source"];
+      if (kind.startsWith("other-"))
+        state.bills.push({
+          ...bill,
+          id: "source",
+          sourceBillIds: undefined,
+          status: "MERGED",
+          ...(kind === "other-tenant" ? { tenantId: "other" } : { branchId: "other" }),
+        });
+      expect(deliveryDaySummary(state, scope)).toMatchObject({
+        chargedMinor: 15000,
+        riderPayableMinor: 15000,
+        unclassifiedInvoiceIds: [bill.id],
+        riders: [{ name: "Unassigned", payableMinor: 15000 }],
+      });
+    },
+  );
   it("never overwrites a provider fee or adds a second local fee", () => {
     const state = TransactionEngine.createOrder(
       createEmptyTransactionState(tenantId),
