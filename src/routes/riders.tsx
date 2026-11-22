@@ -15,6 +15,8 @@ import {
 import { permissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { riderWorkload } from "@/delivery/rider-workload";
+import { deliveryDaySummary } from "@/delivery/delivery-day-summary";
+import { formatMinor } from "@/payments/money";
 
 type Rider = {
   id: string;
@@ -24,6 +26,7 @@ type Rider = {
   clockedIn: string;
   activeTasks: number;
   completedToday: number;
+  deliveryFees: string;
   status: string;
 };
 
@@ -55,6 +58,7 @@ const columns: EnterpriseColumn<Rider>[] = [
   { key: "clockedIn", label: "Clocked in" },
   { key: "activeTasks", label: "Active", align: "right", sortable: true },
   { key: "completedToday", label: "Completed", align: "right", sortable: true },
+  { key: "deliveryFees", label: "Today's invoiced rider fees", align: "right" },
   { key: "status", label: "Status", render: (row) => <Status>{row.status}</Status> },
 ];
 
@@ -101,6 +105,7 @@ function Riders() {
   scopeRef.current = scope;
   const canAdd = !isAllBranches && hasPermission(permissions.ridersManage);
   const channels = getConfigurationRepository().listOrderChannels(activeTenantId, false);
+  const currency = getConfigurationRepository().getTenant(activeTenantId).defaultCurrency;
 
   const scopedRows = useMemo<Rider[]>(() => {
     const employees = state.employees.filter(
@@ -109,6 +114,7 @@ function Riders() {
         employee.role === "Rider" &&
         matchesBranch(employee.branchId ?? employee.branch),
     );
+    const summaries = new Map<string, ReturnType<typeof deliveryDaySummary>>();
     return employees.map((employee) => {
       const employeeBranch = branchRecords.find(
         (item) =>
@@ -126,6 +132,28 @@ function Riders() {
       const attendance = state.attendanceRecords.find(
         (record) => record.employeeId === employee.id && record.date === today,
       );
+      const scopedBranch = employee.branchId ?? employeeBranch?.id ?? branchId;
+      if (!summaries.has(scopedBranch))
+        summaries.set(
+          scopedBranch,
+          deliveryDaySummary(state, {
+            tenantId: activeTenantId,
+            branchId: scopedBranch,
+            businessDate: today,
+            timeZone: employeeBranch?.timezone ?? timeZone,
+            cutoffMinutes: Number(employeeBranch?.metadata["businessDayCutoffMinutes"] ?? 0),
+            currency,
+          }),
+        );
+      const feeRows = summaries.get(scopedBranch)!.riders;
+      const deliveryFees = feeRows.some(
+        (row) => !row.riderId && row.name === `${employee.name} (identity unresolved)`,
+      )
+        ? "Review assignment"
+        : formatMinor(
+            feeRows.find((row) => row.riderId === employee.id)?.payableMinor ?? 0,
+            currency,
+          );
       let status = attendance?.clockIn
         ? activeTasks > 0
           ? "In progress"
@@ -148,19 +176,11 @@ function Riders() {
         clockedIn: attendance?.clockIn ?? "-",
         activeTasks,
         completedToday,
+        deliveryFees,
         status,
       };
     });
-  }, [
-    matchesBranch,
-    state.attendanceRecords,
-    state.employees,
-    state.orders,
-    branchId,
-    branchRecords,
-    channels,
-    timeZone,
-  ]);
+  }, [matchesBranch, state, branchId, branchRecords, channels, timeZone, activeTenantId, currency]);
 
   const available = scopedRows.filter((row) => row.status === "Available");
 

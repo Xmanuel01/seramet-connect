@@ -26,6 +26,41 @@ describe.sequential("server-authoritative settings configuration", () => {
 
   afterEach(() => db.close());
 
+  it("creates and toggles rider delivery for arbitrary channels with an audited backend setting", async () => {
+    const manager = actor([permissions.settingsChannelManage]);
+    const input = {
+      code: "NEIGHBOUR",
+      displayName: "Neighbour delivery",
+      channelType: "OTHER" as const,
+      useOnlinePrice: false,
+      riderDeliveryEnabled: true,
+      reason: "Enable restaurant rider delivery",
+    };
+    const created = await createOrderChannel(db, manager, input);
+    expect(created.orderChannel.metadata).toMatchObject({
+      useOnlinePrice: false,
+      deliverySettings: { fulfilment: "RESTAURANT", allowOrderAmount: true, beneficiary: "RIDER" },
+    });
+    expect((await createOrderChannel(db, manager, input)).duplicate).toBe(true);
+    await expect(
+      createOrderChannel(db, manager, { ...input, riderDeliveryEnabled: false }),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(
+      updateOrderChannel(db, actor([]), created.orderChannel.id, {
+        riderDeliveryEnabled: false,
+        reason: "Unauthorized change attempt",
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+    const disabled = await updateOrderChannel(db, manager, created.orderChannel.id, {
+      riderDeliveryEnabled: false,
+      reason: "Marketplace now supplies the rider",
+    });
+    expect(disabled.orderChannel.metadata).toMatchObject({
+      deliverySettings: { fulfilment: "PROVIDER", allowOrderAmount: false },
+    });
+    expect(storedPayload("order_channels", created.orderChannel.id)).toEqual(disabled.orderChannel);
+  });
+
   it("persists an exact payment method once and audits only the authoritative mutation", async () => {
     const input = {
       code: "STAFF_MEAL",

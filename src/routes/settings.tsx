@@ -3,6 +3,7 @@ import { DeliverySettingsDialog } from "@/delivery/DeliverySettingsDialog";
 import { PayoutAccountsDialog } from "@/components/app/PayoutAccountsDialog";
 import type { PayoutAccounts } from "@/payments/payout-accounts";
 import type { DeliverySettings } from "@/delivery/delivery-charge";
+import { deliverySettings } from "@/delivery/delivery-charge";
 import { ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
@@ -73,6 +74,7 @@ function Settings() {
   const [channelCode, setChannelCode] = useState("");
   const [channelType, setChannelType] = useState<OrderChannelType>("OTHER");
   const [channelUsesOnlinePrice, setChannelUsesOnlinePrice] = useState(false);
+  const [channelRiderDelivery, setChannelRiderDelivery] = useState(false);
   // Follows the channel type until the user sets it themselves.
   const [channelRequiresTable, setChannelRequiresTable] = useState<boolean | null>(null);
   const newChannelRequiresTable = channelRequiresTable ?? channelType === "DINE_IN";
@@ -216,12 +218,14 @@ function Settings() {
         code,
         channelType,
         useOnlinePrice: channelUsesOnlinePrice,
+        riderDeliveryEnabled: channelRiderDelivery,
         requiresTable: newChannelRequiresTable,
         reason: "Created from Settings order channels",
       });
       setChannelName("");
       setChannelCode("");
       setChannelUsesOnlinePrice(false);
+      setChannelRiderDelivery(false);
       setChannelRequiresTable(null);
       setConfigNotice({
         kind: "success",
@@ -286,6 +290,7 @@ function Settings() {
       useOnlinePrice?: boolean;
       requiresTable?: boolean;
       deliverySettings?: DeliverySettings;
+      riderDeliveryEnabled?: boolean;
       payoutAccounts?: PayoutAccounts;
     },
   ) => {
@@ -879,6 +884,15 @@ function Settings() {
                   />
                   Use online price
                 </label>
+                <label className="flex min-h-9 items-center gap-2 self-end rounded-md border border-border bg-card px-3 text-[12px] font-semibold text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={channelRiderDelivery}
+                    disabled={!canManageOrderChannels || Boolean(configSaving)}
+                    onChange={(event) => setChannelRiderDelivery(event.target.checked)}
+                  />
+                  Rider delivery
+                </label>
                 <label className="flex h-9 items-center gap-2 self-end rounded-md border border-border bg-card px-3 text-[12px] font-semibold text-foreground">
                   <input
                     type="checkbox"
@@ -916,6 +930,19 @@ function Settings() {
                     </div>
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       <Status>{channel.enabled ? "Active" : "Disabled"}</Status>
+                      <label className="flex items-center gap-2 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={deliverySettings(channel)?.fulfilment === "RESTAURANT"}
+                          disabled={!canManageOrderChannels || Boolean(configSaving)}
+                          onChange={(event) =>
+                            void updateConfiguredChannel(channel.id, channel.displayName, {
+                              riderDeliveryEnabled: event.target.checked,
+                            })
+                          }
+                        />
+                        Rider delivery
+                      </label>
                       {channel.channelType === "MARKETPLACE" && (
                         <PayoutAccountsDialog
                           channel={channel}
