@@ -16,7 +16,7 @@ export function verifyPrintAuthorization(authorization, config, now = Date.now()
     throw new Error("INVALID_AUTHORIZATION");
   const job = JSON.parse(Buffer.from(authorization.payload, "base64url").toString("utf8"));
   if (
-    ![1, 2].includes(job.v) ||
+    ![1, 2, 3].includes(job.v) ||
     job.bridgeId !== config.bridgeId ||
     job.tenantId !== config.tenantId ||
     job.branchId !== config.branchId ||

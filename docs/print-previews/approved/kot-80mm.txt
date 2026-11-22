@@ -1,0 +1,23 @@
+              KITCHEN ORDER
+NEW ORDER                          KITCHEN
+------------------------------------------
+ORDER #06551
+DATE: 22 Nov 2026
+TIME: 10:24 AM
+- - - - - - - - - - - - - - - - - - - - -
+CUSTOMER: Uber Eats
+- - - - - - - - - - - - - - - - - - - - -
+2 x Mbuzi Stew + Rice
+    Item instructions: Extra soup on the
+    side
+- - - - - - - - - - - - - - - - - - - - -
+3 x Ugali
+- - - - - - - - - - - - - - - - - - - - -
+           GENERAL INSTRUCTIONS
++----------------------------------------+
+|         Pack items separately          |
++----------------------------------------+
+- - - - - - - - - - - - - - - - - - - - -
+REQUESTED BY: Emmanuel O.
+- - - - - - - - - - - - - - - - - - - - -
+           END OF KITCHEN ORDER

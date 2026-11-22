@@ -2,6 +2,7 @@ import { activeLocale, activeCurrency } from "@/lib/currency";
 import { parseMajorAmount, formatMinor, minorDigits } from "@/payments/money";
 import {
   renderAmendmentTicket as renderOrderChangeTemplate,
+  duplicateRich,
   renderApprovedInvoice,
   renderApprovedReceipt,
   renderCustomerBill,
@@ -10,6 +11,8 @@ import {
   renderSalesReceipt,
   renderTaxInvoice,
   renderVoidTicket as renderVoidTemplate,
+  type PrintedDocument,
+  type RichDocument,
 } from "@/printing/documents";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { getSerametAccessToken } from "@/lib/access-token";
@@ -214,6 +217,8 @@ export type PrintJob = {
   failureReason?: string;
   template: string;
   content: string;
+  /** Typeset form of the approved documents, printed by raster printers and shown in previews. */
+  rich?: RichDocument;
   duplicateKey: string;
   reprintOfJobId?: string;
   productionStation?: ProductionStation;
@@ -622,6 +627,7 @@ export const SerametPrintService = {
         ),
         original.content,
       ].join("\n"),
+      ...(original.rich ? { rich: duplicateRich(original.rich, requestedBy) } : {}),
       duplicateKey,
       reprintOfJobId: original.id,
       ...(resolution.routeMode === "fallback" && resolution.fallbackPrinter?.id
@@ -1001,7 +1007,7 @@ function createJob({
   order,
   documentType,
   resolution,
-  content,
+  content: rendered,
   productionStation,
   kitchenTicketId,
   kitchenTicketRecordId,
@@ -1013,7 +1019,8 @@ function createJob({
   order: OrderForPrint;
   documentType: PrintDocumentType;
   resolution: RouteResolution;
-  content: string;
+  /** Ruled text, or a rendered document carrying its typeset form too. */
+  content: string | PrintedDocument;
   productionStation?: ProductionStation;
   kitchenTicketId?: string;
   kitchenTicketRecordId?: string;
@@ -1021,6 +1028,8 @@ function createJob({
   amendmentType?: PrintJob["amendmentType"];
   duplicateKey?: string;
 }): PrintJob {
+  const content = typeof rendered === "string" ? rendered : rendered.content;
+  const rich = typeof rendered === "string" ? undefined : rendered.rich;
   const assignedPrinter =
     resolution.routeMode === "fallback" ? resolution.fallbackPrinter : resolution.printer;
   const isKdsTicket = resolution.destination === "KDS" || documentType === "KDS_TICKET";
@@ -1055,6 +1064,7 @@ function createJob({
     kitchenTicketRecordId,
     kitchenDelivery,
     amendmentType,
+    rich,
   }) as PrintJob;
 }
 
@@ -1267,7 +1277,7 @@ function renderApprovedOrderTicket(
       ...(voided && set(order.voidApprovedBy) ? { voidApprovedBy: set(order.voidApprovedBy) } : {}),
     },
     { paper },
-  ).content;
+  );
 }
 
 /**
@@ -1372,7 +1382,7 @@ function renderApprovedCustomerDocument(
         ...(order.loyaltySummary ? { loyalty: order.loyaltySummary } : {}),
       },
       ctx,
-    ).content;
+    );
   }
 
   const till = set(order.tillNumber) ?? set(identity.tillNumber);
@@ -1413,7 +1423,7 @@ function renderApprovedCustomerDocument(
     },
     ctx,
     documentType === "BILL" ? "BILL" : "TAX_INVOICE",
-  ).content;
+  );
 }
 
 /** Kitchen and bar tickets on the shared table templates. */

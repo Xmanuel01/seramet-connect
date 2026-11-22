@@ -133,7 +133,8 @@ test("oversized, unsupported, mismatched and altered layouts fail before any tra
     (j) => (j.profile.raster.maxBandHeight = 4096),
     (j) => (j.profile.raster.maxBytes = 4096),
     (j) => (j.profile.raster.maxHeightDots = 1),
-    (j) => (j.target.transport = "WINDOWS"),
+    // Image mode now also runs over the Windows RAW spooler; an unknown transport still fails.
+    (j) => (j.target.transport = "SERIAL"),
     (j) => (j.profile.renderingMode = "UNKNOWN"),
     (j) => (j.document.rows[1].text = "altered"),
     (j) => (j.document.renderer = "unknown"),

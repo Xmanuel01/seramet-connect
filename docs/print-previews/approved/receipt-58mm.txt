@@ -1,0 +1,41 @@
+    MONA SWAHILI RESTAURANT
+Kipro Centre, Westlands, Sports
+         Road, Nairobi
+     Tel: +254 719 427 919
+--------------------------------
+RECEIPT                 [ PAID ]
+RCPT #0386S        | DATE:
+                   | 22 Nov 2026
+CUSTOMER:          | TIME:
+Walk-in            | 11:36 AM
+- - - - - - - - - - - - - - - -
++---+--------------+-----------+
+|QTY|ITEM          |TOTAL (KES)|
++---+--------------+-----------+
+| 2 |Chicken Samosa|     200.00|
+|   |@ 100.00      |           |
++---+--------------+-----------+
+| 1 |Eggs          |     250.00|
+|   |@ 250.00      |           |
++---+--------------+-----------+
+| 1 |Still Water   |     150.00|
+|   |500ml         |           |
+|   |@ 150.00      |           |
++---+--------------+-----------+
+| 1 |Kenyan Tea /  |     250.00|
+|   |African Tea   |           |
+|   |@ 250.00      |           |
++---+--------------+-----------+
+| 1 |Toast Plain   |     150.00|
+|   |@ 150.00      |           |
++---+--------------+-----------+
+            SUBTOTAL    1,000.00
+--------------------------------
+GRAND TOTAL         KES 1,000.00
+--------------------------------
+PAYMENT DETAILS
+Method: M-Pesa
+Reference: TKM3QX81ZP
+Amount Paid: KES 1,000.00
+--------------------------------
+  THANK YOU FOR YOUR BUSINESS

@@ -17,9 +17,12 @@ import type { TransactionRepository } from "@/lib/seramet-repository";
 import { SerametPrintService, type OrderForPrint } from "@/lib/seramet-print-service";
 import { PlatformConfigurationError } from "@/platform/repositories/configuration-repository";
 import {
-  renderCustomerBill,
-  renderProductionTicket,
-  renderSalesReceipt,
+  renderApprovedInvoice,
+  renderApprovedReceipt,
+  renderOrderTicket,
+  bannerRich,
+  duplicateRich,
+  type RichDocument,
 } from "@/printing/documents";
 import { billingRecordToPrintOrder, receiptRecordToPrintOrder } from "@/lib/print-order-adapter";
 import type { D1Database } from "@/server/database/d1";
@@ -245,7 +248,7 @@ const receiptLogoSchema = z
   .strict();
 const deliverySchema = z
   .object({
-    v: z.union([z.literal(1), z.literal(2)]),
+    v: z.union([z.literal(1), z.literal(2), z.literal(3)]),
     id: z.string().min(1).max(300),
     tenantId: z.string().min(1),
     branchId: z.string().min(1),
@@ -857,6 +860,8 @@ export async function handlePrintingApi(
     throw new SerametHttpError(400, "Printer copy limit exceeded");
   const state = await repository.loadState(actor.tenantId);
   let content: string;
+  // The typeset approved document, printed by raster (image) printers.
+  let rich: RichDocument | undefined;
   let id: string;
   let recoveryId: string | undefined;
   if (["FOOD_KOT", "BAR_TICKET", "DISPATCH_TICKET"].includes(input.documentType)) {
@@ -917,11 +922,14 @@ export async function handlePrintingApi(
     if (!document)
       throw new SerametHttpError(403, "Printer is not the authoritative station route");
     content = document.content;
+    rich = document.rich;
     id = `${obligation.id}:${input.copyIndex}`;
     if (obligation.reviewReason) recoveryId = obligation.claimToken;
   } else if (input.documentType === "TEST") {
     manage(actor);
     content = diagnosticContent(actor, input.testKind ?? "BILL", printer.paperWidth);
+    const sample = diagnosticDocument(actor, input.testKind ?? "BILL", printer.paperWidth).rich;
+    if (sample) rich = bannerRich(sample, "PRINTER TEST - NOT A SALE");
     id = `TEST:${actor.id}:${input.recordId}:${input.copyIndex}`;
   } else {
     requirePermission(actor, permissions.invoicesManage);
@@ -945,11 +953,13 @@ export async function handlePrintingApi(
     if (!printOrder) throw new SerametHttpError(404, "Authoritative document unavailable");
     if (!printer.roles.some((role) => role === input.documentType))
       throw new SerametHttpError(403, "Printer is not assigned to this document");
-    content = SerametPrintService.createDocumentJob(
+    const job = SerametPrintService.createDocumentJob(
       profile,
       printOrder,
       input.documentType as "BILL" | "RECEIPT" | "INVOICE",
-    ).content;
+    );
+    content = job.content;
+    rich = job.rich;
     id = `${input.documentType}:${input.recordId}:${input.copyIndex}`;
     if (input.reprintId) {
       if (!input.reprintReason)
@@ -978,6 +988,7 @@ export async function handlePrintingApi(
       }
       await auditStatement(db, actor, id, "PRINT_REPRINT_AUTHORIZED", input.reprintReason).run();
       content = SerametPrintService.formatDuplicateCopy(content, printer.paperWidth);
+      if (rich) rich = duplicateRich(rich);
     }
   }
   const signingMaster = await printSigningMaster(env);
@@ -991,20 +1002,27 @@ export async function handlePrintingApi(
   );
   const fallbackProfile = fallback ? printerRenderingProfile(fallback) : undefined;
   const hasRaster = [profile, fallbackProfile].some((p) => p?.renderingMode === "RASTER_ESC_POS");
+  // Raster printers print the approved typeset layout when the document has one.
+  const typeset = hasRaster && rich?.paper === printer.paperWidth ? rich : undefined;
+  const version = typeset ? 3 : hasRaster ? 2 : 1;
   if (hasRaster && fallback && fallback.paperWidth !== printer.paperWidth)
     throw new SerametHttpError(400, "Raster fallback requires the same paper profile");
   let document: ReturnType<typeof buildThermalLayout> | undefined;
   // Bills, receipts and invoices (and their test prints) carry the branch's logo.
   const logoKind = input.documentType === "TEST" ? (input.testKind ?? "BILL") : input.documentType;
-  let logo = LOGO_DOCUMENT_TYPES.includes(logoKind)
-    ? await effectiveReceiptLogo(db, actor.tenantId, actor.branchId)
-    : undefined;
+  // The approved layout's header is the business name, address and phone, so a
+  // typeset document carries no separate logo image.
+  let logo =
+    !typeset && LOGO_DOCUMENT_TYPES.includes(logoKind)
+      ? await effectiveReceiptLogo(db, actor.tenantId, actor.branchId)
+      : undefined;
   try {
-    document = hasRaster ? buildThermalLayout(content, printer.paperWidth) : undefined;
+    document = hasRaster && !typeset ? buildThermalLayout(content, printer.paperWidth) : undefined;
     const renderJob = {
-      v: hasRaster ? 2 : 1,
+      v: version,
       content,
-      document,
+      ...(document ? { document } : {}),
+      ...(typeset ? { rich: typeset } : {}),
       target: printerTarget(printer),
       profile,
       ...(fallback ? { fallbackTarget: printerTarget(fallback), fallbackProfile } : {}),
@@ -1022,7 +1040,7 @@ export async function handlePrintingApi(
     throw new SerametHttpError(400, "Unsupported or oversized document rendering profile");
   }
   const delivery = await authorizeDelivery(db, actor, {
-    v: hasRaster ? 2 : 1,
+    v: version,
     id,
     bridgeId: printer.bridgeId,
     tenantId: actor.tenantId,
@@ -1035,6 +1053,7 @@ export async function handlePrintingApi(
     documentType: input.documentType,
     content,
     ...(document ? { document } : {}),
+    ...(typeset ? { rich: typeset } : {}),
     ...(logo ? { logo } : {}),
     target: printerTarget(printer),
     printerConfigurationHash: await digest(printer),
@@ -1073,68 +1092,94 @@ function diagnosticContent(
   const banner = "PRINTER TEST - NOT A SALE";
   return [
     " ".repeat(Math.floor((width - banner.length) / 2)) + banner,
-    diagnosticBody(actor, kind, paperWidth),
+    diagnosticDocument(actor, kind, paperWidth).content,
   ]
     .join("\n")
     .trimEnd();
 }
 
-function diagnosticBody(
+const DIAGNOSTIC_LINE = {
+  name: "Printer diagnostic",
+  quantity: 1,
+  unitPrice: 0,
+  modifiers: ["Check the borders and columns"],
+};
+
+/**
+ * The test document in both forms: ruled text for text printers and the
+ * approved typeset layout for image printers. A branch without print settings
+ * gets the same approved layouts under a plain header.
+ */
+function diagnosticDocument(
   actor: ServerActor,
   kind: "BILL" | "RECEIPT" | "FOOD_KOT",
   paperWidth: "58mm" | "80mm",
-) {
-  const issuedAt = new Date().toISOString().replace("T", " ").slice(0, 16);
-  const line = {
-    name: "Printer diagnostic",
-    quantity: 1,
-    unitPrice: 0,
-    modifiers: ["Check the borders and columns"],
-  };
+): { content: string; rich?: RichDocument } {
   let profile: ReturnType<typeof SerametPrintService.getBranchHardwareProfile> | undefined;
   try {
     profile = SerametPrintService.getBranchHardwareProfile(actor.branchId, actor.tenantId);
   } catch (error) {
     if (!(error instanceof PlatformConfigurationError)) throw error;
   }
-  // A branch without print settings still gets the same layouts, under a plain header.
-  if (!profile) {
-    const ctx = { paper: paperWidth };
-    const business = { name: "Seramet" };
-    const tax = { vatRegistered: false };
-    if (kind === "FOOD_KOT")
-      return renderProductionTicket(
-        {
-          station: "KITCHEN",
-          ticketNumber: "#TEST",
-          orderNumber: "#TEST",
-          orderType: "Printer test",
-          table: "T1",
-          printedAt: issuedAt,
-          lines: [line],
-        },
-        ctx,
-      ).content;
-    if (kind === "RECEIPT")
-      return renderSalesReceipt(
-        {
-          business,
-          tax,
-          receiptNumber: "RCP-TEST",
-          issuedAt,
-          lines: [line],
-          payments: [{ method: "Cash", amount: 0 }],
-        },
-        ctx,
-      ).content;
-    return renderCustomerBill(
-      { business, tax, billNumber: "INV-TEST", orderNumber: "#TEST", issuedAt, lines: [line] },
-      ctx,
-    ).content;
+  if (profile) {
+    const job = diagnosticJob(actor, kind, paperWidth, profile);
+    return { content: job?.content ?? "", ...(job?.rich ? { rich: job.rich } : {}) };
   }
+  const ctx = { paper: paperWidth, currency: "KES" };
+  const now = new Date().toISOString();
+  const date = now.slice(0, 10);
+  const time = now.slice(11, 16);
+  const business = { name: "Seramet" };
+  const lines = [DIAGNOSTIC_LINE];
+  const totals = { subtotal: 0, total: 0 };
+  const document =
+    kind === "FOOD_KOT"
+      ? renderOrderTicket(
+          {
+            station: "KITCHEN",
+            status: "NEW",
+            orderNumber: "TEST",
+            date,
+            time,
+            customer: "Printer test",
+            table: "T1",
+            lines,
+            requestedBy: actor.name,
+          },
+          ctx,
+        )
+      : kind === "RECEIPT"
+        ? renderApprovedReceipt(
+            {
+              business,
+              receiptNumber: "RCPT-TEST",
+              date,
+              time,
+              lines,
+              totals,
+              payments: [{ method: "Cash", amount: 0 }],
+              paid: 0,
+            },
+            ctx,
+          )
+        : renderApprovedInvoice(
+            { business, invoiceNumber: "INV-TEST", date, time, lines, totals },
+            ctx,
+            "BILL",
+          );
+  return { content: document.content, ...(document.rich ? { rich: document.rich } : {}) };
+}
+
+function diagnosticJob(
+  actor: ServerActor,
+  kind: "BILL" | "RECEIPT" | "FOOD_KOT",
+  paperWidth: "58mm" | "80mm",
+  profile = SerametPrintService.getBranchHardwareProfile(actor.branchId, actor.tenantId),
+) {
   for (const template of Object.values(profile.templateSettings)) template.width = paperWidth;
   for (const route of Object.values(profile.documentRoutes)) route.template = paperWidth;
   profile.kitchenMode = "PRINTER_ONLY";
+  const line = DIAGNOSTIC_LINE;
   const order: OrderForPrint = {
     orderId: "#TEST",
     branch: profile.branch,
@@ -1162,8 +1207,8 @@ function diagnosticBody(
     ],
   };
   return kind === "FOOD_KOT"
-    ? (SerametPrintService.createProductionTicketJobs(profile, order, []).jobs.find(
+    ? SerametPrintService.createProductionTicketJobs(profile, order, []).jobs.find(
         (job) => job.kitchenDelivery !== "KDS_DISPLAY",
-      )?.content ?? "")
-    : SerametPrintService.createDocumentJob(profile, order, kind).content;
+      )
+    : SerametPrintService.createDocumentJob(profile, order, kind);
 }

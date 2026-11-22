@@ -101,6 +101,11 @@ export interface PrintedDocument {
   paper: Paper;
   content: string;
   qrCodes: QrCode[];
+  /**
+   * The typeset form of the approved documents (KOT, BOT, invoice, receipt) on
+   * 58mm and 80mm paper: printed by raster printers and shown in previews.
+   */
+  rich?: import("../../../printing-core/rich-render.mjs").RichDocument;
 }
 
 export type PrintableDocumentKind =

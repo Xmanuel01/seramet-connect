@@ -13,6 +13,7 @@
 import { centered, clean, compose, money, quantity, spread, table, wrap } from "./ruled";
 import type { Column } from "./ruled";
 import type { LoyaltyDetails } from "./front-of-house";
+import { invoiceRich, orderTicketRich, receiptRich } from "./approved-rich";
 import { currency as currencyCode, lineAmount, widthOf } from "./shared";
 import type {
   EtimsStatus,
@@ -202,7 +203,13 @@ export function renderOrderTicket(input: OrderTicketInput, ctx: PrintContext): P
       : kind === "BAR"
         ? "BOT"
         : "KOT";
-  return { kind: documentKind, paper: ctx.paper, content, qrCodes: [] };
+  return {
+    kind: documentKind,
+    paper: ctx.paper,
+    content,
+    qrCodes: [],
+    ...(ctx.paper !== "A4" ? { rich: orderTicketRich(input, ctx.paper) } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -376,7 +383,13 @@ export function renderApprovedInvoice(
     mpesa.length > 0 && mpesa,
     balance > 0 && instructions.length > 0 && instructions.flatMap((line) => wrap(line, width)),
   ]);
-  return { kind, paper: ctx.paper, content, qrCodes };
+  return {
+    kind,
+    paper: ctx.paper,
+    content,
+    qrCodes,
+    ...(ctx.paper !== "A4" ? { rich: invoiceRich(input, ctx.paper, code) } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -482,5 +495,11 @@ export function renderApprovedReceipt(
     solidSeparator(width),
     centered("THANK YOU FOR YOUR BUSINESS", width),
   ]);
-  return { kind: "RECEIPT", paper: ctx.paper, content, qrCodes };
+  return {
+    kind: "RECEIPT",
+    paper: ctx.paper,
+    content,
+    qrCodes,
+    ...(ctx.paper !== "A4" ? { rich: receiptRich(input, ctx.paper, code) } : {}),
+  };
 }
