@@ -1844,7 +1844,20 @@ export function filterStateForActor(state: TransactionState, actor: ServerActor)
       }));
     return { ...createEmptyTransactionState(actor.tenantId), orders };
   }
-  return closingStateForReader(scoped, actor.permissions.includes(permissions.reconciliationView));
+  const readable = closingStateForReader(
+    scoped,
+    actor.permissions.includes(permissions.reconciliationView),
+  );
+  // Pay is for payroll and finance; others (a supervisor closing the day) see names only.
+  if (
+    actor.permissions.includes(permissions.payrollManage) ||
+    actor.permissions.includes(permissions.financeView)
+  )
+    return readable;
+  return {
+    ...readable,
+    employees: readable.employees.map((employee) => ({ ...employee, netMonthlyPay: 0 })),
+  };
 }
 
 async function loadCachedIdempotency(

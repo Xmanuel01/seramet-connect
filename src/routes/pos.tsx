@@ -795,6 +795,10 @@ function POS() {
     tenant.defaultCurrency,
   );
   const tax = majorFromMinor(taxTotals.reported + serviceTotals.reported, tenant.defaultCurrency);
+  // Prices that already include VAT and service show them as "included", not as an add-on.
+  const chargesIncluded =
+    taxTotals.reported + serviceTotals.reported > 0 && taxTotals.added + serviceTotals.added === 0;
+  const taxLabel = chargesIncluded ? "Included tax and service" : "Tax and service";
   const total = majorFromMinor(
     subtotalMinor + taxTotals.added + serviceTotals.added + deliveryAmountMinor,
     tenant.defaultCurrency,
@@ -2102,7 +2106,7 @@ function POS() {
                   <dd className="num">{formatMoney(subtotal)}</dd>
                 </div>
                 <div className="flex justify-between text-muted-foreground">
-                  <dt>Tax and service</dt>
+                  <dt>{taxLabel}</dt>
                   <dd className="num">{formatMoney(tax)}</dd>
                 </div>
                 <div className="flex justify-between border-t border-border pt-2 text-[16px] font-bold">
@@ -2309,7 +2313,7 @@ function POS() {
                     <dd className="num font-semibold">{formatMoney(subtotal)}</dd>
                   </div>
                   <div className="flex justify-between">
-                    <dt className="text-muted-foreground">Tax and service</dt>
+                    <dt className="text-muted-foreground">{taxLabel}</dt>
                     <dd className="num font-semibold">{formatMoney(tax)}</dd>
                   </div>
                   <div className="flex justify-between border-t border-border pt-2">
@@ -2349,7 +2353,7 @@ function POS() {
                 <dd className="num">{formatMoney(subtotal)}</dd>
               </div>
               <div className="flex justify-between text-muted-foreground">
-                <dt>Tax and service</dt>
+                <dt>{taxLabel}</dt>
                 <dd className="num">{formatMoney(tax)}</dd>
               </div>
               <div className="flex justify-between border-t border-border pt-2 text-[16px] font-bold">

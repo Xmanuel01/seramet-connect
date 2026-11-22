@@ -4726,6 +4726,7 @@ export class OnboardingService {
       documentCount,
       successfulTests,
       verifiedBackups,
+      branchesWithoutKitchenMode,
       branchPolicy,
     ] = await Promise.all([
       batch.count(
@@ -4791,6 +4792,14 @@ export class OnboardingService {
       batch.count(
         `SELECT COUNT(*) count FROM backup_records WHERE tenant_id=? AND status IN ('SUCCEEDED','VERIFIED') AND verified_at IS NOT NULL`,
         this.actor.tenantId,
+      ),
+      // Until a branch chooses how kitchen orders reach the kitchen, its tills can't send any.
+      batch.count(
+        `SELECT COUNT(*) count FROM branches WHERE tenant_id=? AND active=1 AND (? IS NULL OR id=?)
+         AND payload_json NOT LIKE '%"kitchenMode":"%'`,
+        this.actor.tenantId,
+        branchId ?? null,
+        branchId ?? null,
       ),
       branchId ? this.branchPolicy(branchId) : this.combinedBranchPolicy(),
       batch.run(),
@@ -5012,6 +5021,16 @@ export class OnboardingService {
       `${stationCount} active station(s) found`,
       "Configure production stations and KDS routing",
       { evidence: { count: stationCount } },
+    );
+    add(
+      "KITCHEN_STATIONS",
+      "KITCHEN_MODE_CHOSEN",
+      branchesWithoutKitchenMode === 0,
+      branchesWithoutKitchenMode === 0
+        ? "How orders reach the kitchen is chosen"
+        : "Not chosen how orders reach the kitchen, so tills can't send orders yet",
+      "Choose how orders reach the kitchen (Printers page, What prints where)",
+      { evidence: { branchesWithoutKitchenMode } },
     );
     if (printingRequired)
       add(

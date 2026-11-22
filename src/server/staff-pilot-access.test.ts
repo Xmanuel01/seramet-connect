@@ -213,8 +213,9 @@ describe("staff role/device HTTP boundaries", () => {
       permissions: staffRolePresets.supervisor!.permissions,
       salesTerminal: false,
     });
-    expect(attendanceSupervisor.employees).toEqual([]);
-    expect(attendanceSupervisor.cashDrawers).toEqual([]);
+    // A supervisor closes the day, so sees the branch drawers and staff names, never pay.
+    expect(attendanceSupervisor.cashDrawers.map((row) => row.id)).toEqual(["private-drawer"]);
+    expect(attendanceSupervisor.employees.map((row) => row.netMonthlyPay)).toEqual([0]);
   });
   it("does not let a multi-branch terminal submit sales commands to another active branch", () => {
     const other = (

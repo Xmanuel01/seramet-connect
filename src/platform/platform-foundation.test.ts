@@ -256,9 +256,32 @@ describe.sequential("pass 1 platform foundation acceptance", () => {
     expect(profile.tenantId).toBe(tenant.id);
     expect(profile.branchId).toBe(branch.id);
 
-    state.printRoutes = [];
+    // Legacy route tables still need their routes once any exist.
+    state.printRoutes = state.printRoutes.filter((route) => route.branchId !== branch.id);
+    state.printRoutes.push({ ...state.printRoutes[0]!, branchId: branch.id, documentType: "" });
+    state.devices = state.devices.filter((device) => device.branchId !== branch.id);
     setConfigurationRepositoryForTests(new ConfigurationRepository(state));
-    expect(() => getConfiguredBranchHardwareProfile(branch.id, tenant.id)).toThrow(/routes/);
+    expect(() => getConfiguredBranchHardwareProfile(branch.id, tenant.id)).toThrow(
+      /No hardware devices/,
+    );
+  });
+
+  it("lets a branch with no printers trade on kitchen screens once the kitchen mode is chosen", () => {
+    const state = createDefaultDemoPlatformState();
+    const branch = state.branches[0]!;
+    state.printRoutes = state.printRoutes.filter((route) => route.branchId !== branch.id);
+    state.devices = state.devices.filter((device) => device.branchId !== branch.id);
+    branch.metadata = { ...branch.metadata, kitchenMode: undefined };
+    setConfigurationRepositoryForTests(new ConfigurationRepository(state));
+    expect(() => getConfiguredBranchHardwareProfile(branch.id, branch.tenantId)).toThrow(
+      "Kitchen operating mode is not configured",
+    );
+
+    branch.metadata = { ...branch.metadata, kitchenMode: "KDS_ONLY" };
+    setConfigurationRepositoryForTests(new ConfigurationRepository(state));
+    const profile = getConfiguredBranchHardwareProfile(branch.id, branch.tenantId);
+    expect(profile.kitchenMode).toBe("KDS_ONLY");
+    expect(profile.printers).toEqual([]);
   });
 });
 

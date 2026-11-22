@@ -59,7 +59,12 @@ export function getConfiguredBranchHardwareProfile(
   const branch = resolved.branch;
   const tenant = repository.getTenant(resolved.tenantId);
   const configuredDevices = repository.listDevices(resolved.tenantId, branch.id);
-  if (configuredDevices.some((device) => device.printing)) {
+  // Branches set up through the Printers page, or with no printer yet (kitchen screens
+  // only), use the enrolled profile; the route-table profile is for legacy configuration.
+  if (
+    configuredDevices.some((device) => device.printing) ||
+    repository.listPrintRoutes(resolved.tenantId, branch.id).length === 0
+  ) {
     return buildEnrolledProfile(resolved.tenantId, branch.id);
   }
   const identity = branchDocumentIdentity(resolved.tenantId, branch.id);

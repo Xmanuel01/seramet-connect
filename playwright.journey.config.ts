@@ -12,7 +12,19 @@ const certFile = resolve(directory, "auth-cert.pem");
 const trustFile = resolve(directory, "trust.pem");
 export const journeyAuthPort = 54329;
 mkdirSync(directory, { recursive: true });
-if (!existsSync(certFile))
+// Playwright loads this config in several processes, so the certificate is only
+// replaced when missing or expiring within a day: replacing it every load would
+// leave the dev server trusting a different certificate from the stand-in's.
+function certificateIsFresh() {
+  if (!existsSync(certFile) || !existsSync(keyFile)) return false;
+  try {
+    execFileSync("openssl", ["x509", "-checkend", "86400", "-noout", "-in", certFile]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+if (!certificateIsFresh())
   execFileSync("openssl", [
     "req",
     "-x509",
@@ -20,7 +32,7 @@ if (!existsSync(certFile))
     "rsa:2048",
     "-nodes",
     "-days",
-    "2",
+    "7",
     "-subj",
     "/CN=127.0.0.1",
     "-addext",

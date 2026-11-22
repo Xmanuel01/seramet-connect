@@ -238,7 +238,7 @@ function KDS() {
         <div className="mx-3 mt-3 rounded-md border border-border bg-secondary/60 px-3 py-2 text-[12px] text-muted-foreground">
           {notice ||
             (configurationError === "Kitchen operating mode is not configured"
-              ? "Choose how your kitchen works in Setup Centre → Kitchen stations & screens."
+              ? "Choose how orders reach the kitchen on the Printers page, next to What prints where."
               : configurationError)}
         </div>
       )}

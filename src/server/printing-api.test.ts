@@ -1004,3 +1004,35 @@ it("keeps logos out of settings snapshots and refuses bad images and missing rig
   const seen = await (await handlePrintingApi(logoRequest("GET"), env(), repository))!.json();
   expect(seen.branch).toMatchObject(sampleLogo);
 });
+
+it("saves how kitchen orders reach the kitchen for the manager's branch, with an audit record", async () => {
+  const put = (body: unknown) =>
+    handlePrintingApi(
+      new Request("http://localhost/api/seramet/printing/kitchen-mode", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+      env(),
+      repository,
+    );
+  const saved = await put({ kitchenMode: "KDS_ONLY" });
+  expect(saved!.status).toBe(200);
+  expect(await saved!.json()).toMatchObject({ branchId, kitchenMode: "KDS_ONLY" });
+  const row = await db
+    .prepare("SELECT payload_json FROM branches WHERE tenant_id=? AND id=?")
+    .bind(actor.tenantId, branchId)
+    .first<{ payload_json: string }>();
+  expect(JSON.parse(row!.payload_json).metadata.kitchenMode).toBe("KDS_ONLY");
+  const audit = await db
+    .prepare("SELECT COUNT(*) n FROM audit_events WHERE action='KITCHEN_MODE_SET'")
+    .first<{ n: number }>();
+  expect(audit!.n).toBe(1);
+
+  await expect(put({ kitchenMode: "SOMETHING_ELSE" })).rejects.toMatchObject({ status: 400 });
+  await expect(
+    put({ branchId: crypto.randomUUID(), kitchenMode: "PRINTER_ONLY" }),
+  ).rejects.toMatchObject({ status: 403 });
+  actor.permissions = [permissions.settingsHardwareView];
+  await expect(put({ kitchenMode: "PRINTER_ONLY" })).rejects.toMatchObject({ status: 403 });
+});

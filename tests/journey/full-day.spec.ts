@@ -66,6 +66,11 @@ export const staff = {
 };
 const codes: Record<keyof typeof staff, string> = { cashier: "", chef: "", supervisor: "" };
 const newPins = { cashier: "538216", chef: "264819", supervisor: "190354" };
+const pinReplaced: Record<keyof typeof staff, boolean> = {
+  cashier: false,
+  chef: false,
+  supervisor: false,
+};
 
 /** Staff code + PIN on the POS keypad; replaces a temporary PIN on first sign-in. */
 async function staffSignIn(page: Page, who: keyof typeof staff) {
@@ -75,6 +80,11 @@ async function staffSignIn(page: Page, who: keyof typeof staff) {
     for (const digit of pin) await page.getByRole("button", { name: digit, exact: true }).click();
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
   };
+  if (pinReplaced[who]) {
+    await signIn(newPins[who]);
+    await expect(page).not.toHaveURL(/\/pos-login/);
+    return;
+  }
   await signIn(staff[who].pin);
   const replace = page.getByRole("heading", { name: "Replace temporary PIN" });
   // Either the first-time PIN change appears or the sign-in leaves the keypad.
@@ -86,6 +96,7 @@ async function staffSignIn(page: Page, who: keyof typeof staff) {
     await page.getByLabel("Confirm new PIN", { exact: true }).fill(newPins[who]);
     await page.getByRole("button", { name: "Change PIN", exact: true }).click();
     await expect(page.getByText("PIN changed. Sign in with your new PIN.")).toBeVisible();
+    pinReplaced[who] = true;
     await signIn(newPins[who]);
   }
   await expect(page).not.toHaveURL(/\/pos-login/);
@@ -177,6 +188,9 @@ test("full day: sign-up, onboarding, setup, trading and business-day close", asy
       const box = page.getByRole("checkbox", { name: station, exact: true });
       if (await box.count()) await box.check();
     }
+    const kitchenMode = page.getByRole("combobox", { name: /How do orders reach the kitchen/ });
+    await expect(kitchenMode).toHaveValue("KDS_ONLY");
+    await kitchenMode.selectOption({ label: "Kitchen screens" });
     await shot(page, "onboarding-stations");
     await next(page, "Your first menu items");
     for (const item of menu) {
@@ -260,52 +274,6 @@ test("full day: sign-up, onboarding, setup, trading and business-day close", asy
   await new Promise<void>((done) => kitchenPrinter.listen(0, "127.0.0.1", done));
   let bridge: { server: Server; close: () => Promise<void> } | undefined;
 
-  await test.step("3b. Owner adds the kitchen printer and connects the print bridge", async () => {
-    await page.goto("/seramet-printers");
-    await page.getByRole("button", { name: "Add printer", exact: true }).click();
-    await page.getByLabel("Name", { exact: true }).fill("Kitchen printer");
-    await page.getByRole("combobox", { name: "How it connects", exact: true }).selectOption("TCP");
-    await page.getByLabel("Printer IP address", { exact: true }).fill("127.0.0.1");
-    await page
-      .getByLabel("Port", { exact: true })
-      .fill(String((kitchenPrinter.address() as { port: number }).port));
-    for (const role of ["Bills", "Receipts"])
-      await page.getByRole("checkbox", { name: role, exact: true }).uncheck();
-    for (const role of ["Kitchen tickets", "Bar tickets"])
-      await page.getByRole("checkbox", { name: role, exact: true }).check();
-    for (const station of ["Kitchen", "Bar"])
-      await page.getByRole("checkbox", { name: station, exact: true }).check();
-    await page
-      .getByRole("combobox", { name: "This branch sends kitchen orders to" })
-      .selectOption({ label: "Kitchen screens and printers" });
-    if (!(await page.getByLabel("Print bridge ID").isVisible()))
-      await page.getByText("More printer settings", { exact: true }).click();
-    await page.getByLabel("Print bridge ID").fill("journey-kitchen-bridge");
-    await page.getByRole("button", { name: "Save printer", exact: true }).click();
-    await expect(page.getByRole("status")).toContainText("Printer saved");
-    // Install the bridge by hand: its setup file comes from the Printers page.
-    await page.getByText("Troubleshooting (for technicians)", { exact: true }).click();
-    const download = page.waitForEvent("download");
-    await page.getByRole("button", { name: "Bridge setup file" }).click();
-    const config = JSON.parse(await readFile((await (await download).path())!, "utf8"));
-    bridge = await createBridge(
-      { ...config, dataDir: await mkdtemp(join(tmpdir(), "journey-bridge-")) },
-      { localTest: true },
-    );
-    await new Promise<void>((done) => bridge!.server.listen(0, "127.0.0.1", () => done()));
-    await page
-      .getByLabel("Local bridge endpoint")
-      .fill(`http://127.0.0.1:${(bridge!.server.address() as { port: number }).port}`);
-    await page.getByLabel("Local bridge token").fill(config.token);
-    await page.getByLabel("Enable installed bridge").check();
-    await page.getByRole("button", { name: "Save local connection", exact: true }).click();
-    await page.getByRole("button", { name: "Test kitchen ticket", exact: true }).click();
-    await expect(page.getByRole("status").filter({ hasText: "Sent to the printer" })).toBeVisible();
-    await expect.poll(() => Buffer.concat(printed).toString("latin1")).toContain("PRINTER TEST");
-    printed.length = 0;
-    await shot(page, "kitchen-printer");
-  });
-
   const browser = page.context().browser() as Browser;
   const kitchen = await (
     await browser.newContext({ viewport: { width: 1280, height: 900 } })
@@ -360,11 +328,78 @@ test("full day: sign-up, onboarding, setup, trading and business-day close", asy
   };
 
   const orders: Record<string, string> = {};
-  await test.step("6. Cashier takes takeaway, dine-in and delivery orders", async () => {
-    orders.takeaway = await placeOrder("Takeaway", [
-      ["Nyama Choma", 1],
-      ["Passion Juice", 2],
-    ]);
+  await test.step("6a. With kitchen screens only (no printer), a takeaway reaches the chef", async () => {
+    orders.takeaway = await placeOrder(
+      "Takeaway",
+      [
+        ["Nyama Choma", 1],
+        ["Passion Juice", 2],
+      ],
+      // Menu prices include 16% VAT: the till shows it as included, never as zero.
+      async (pos) => {
+        const included = pos.getByText("Included tax and service").first();
+        await expect(included).toBeVisible();
+        await expect(included.locator("xpath=following-sibling::dd")).not.toHaveText(/\b0\.00$/);
+      },
+    );
+    const takeaway = (await state(page)).orders.find((order) => order.id === orders.takeaway)!;
+    expect(takeaway.tax).toBeGreaterThan(0);
+    await kitchen.reload();
+    await expect(
+      kitchen.getByRole("article").filter({ hasText: orders.takeaway! }).first(),
+    ).toBeVisible();
+    await shot(kitchen, "kitchen-screen-only");
+  });
+
+  await test.step("6b. Owner adds a kitchen printer and connects the print bridge", async () => {
+    await ownerSignIn(page);
+    await page.goto("/seramet-printers");
+    await page.getByRole("button", { name: "Add printer", exact: true }).click();
+    await page.getByLabel("Name", { exact: true }).fill("Kitchen printer");
+    await page.getByRole("combobox", { name: "How it connects", exact: true }).selectOption("TCP");
+    await page.getByLabel("Printer IP address", { exact: true }).fill("127.0.0.1");
+    await page
+      .getByLabel("Port", { exact: true })
+      .fill(String((kitchenPrinter.address() as { port: number }).port));
+    for (const role of ["Bills", "Receipts"])
+      await page.getByRole("checkbox", { name: role, exact: true }).uncheck();
+    for (const role of ["Kitchen tickets", "Bar tickets"])
+      await page.getByRole("checkbox", { name: role, exact: true }).check();
+    for (const station of ["Kitchen", "Bar"])
+      await page.getByRole("checkbox", { name: station, exact: true }).check();
+    await page
+      .getByRole("combobox", { name: "This branch sends kitchen orders to" })
+      .selectOption({ label: "Kitchen screens and printers" });
+    if (!(await page.getByLabel("Print bridge ID").isVisible()))
+      await page.getByText("More printer settings", { exact: true }).click();
+    await page.getByLabel("Print bridge ID").fill("journey-kitchen-bridge");
+    await page.getByRole("button", { name: "Save printer", exact: true }).click();
+    await expect(page.getByRole("status")).toContainText("Printer saved");
+    // Install the bridge by hand: its setup file comes from the Printers page.
+    await page.getByText("Troubleshooting (for technicians)", { exact: true }).click();
+    const download = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Bridge setup file" }).click();
+    const config = JSON.parse(await readFile((await (await download).path())!, "utf8"));
+    bridge = await createBridge(
+      { ...config, dataDir: await mkdtemp(join(tmpdir(), "journey-bridge-")) },
+      { localTest: true },
+    );
+    await new Promise<void>((done) => bridge!.server.listen(0, "127.0.0.1", () => done()));
+    await page
+      .getByLabel("Local bridge endpoint")
+      .fill(`http://127.0.0.1:${(bridge!.server.address() as { port: number }).port}`);
+    await page.getByLabel("Local bridge token").fill(config.token);
+    await page.getByLabel("Enable installed bridge").check();
+    await page.getByRole("button", { name: "Save local connection", exact: true }).click();
+    await page.getByRole("button", { name: "Test kitchen ticket", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Sent to the printer" })).toBeVisible();
+    await expect.poll(() => Buffer.concat(printed).toString("latin1")).toContain("PRINTER TEST");
+    printed.length = 0;
+    await shot(page, "kitchen-printer");
+  });
+
+  await test.step("6c. Cashier takes dine-in and delivery orders (screens and printer)", async () => {
+    await staffSignIn(page, "cashier");
     orders.dineIn = await placeOrder(
       "Dine-in",
       [
@@ -401,7 +436,10 @@ test("full day: sign-up, onboarding, setup, trading and business-day close", asy
     await shot(kitchen, "kitchen-served");
     // Kitchen tickets also printed on the kitchen printer (Kitchen screens and printers).
     const tickets = Buffer.concat(printed).toString("latin1");
-    for (const id of Object.values(orders)) expect(tickets).toContain(id);
+    // Only orders placed after the printer was added print; the first went to screens only.
+    expect(tickets).toContain(orders.dineIn!);
+    expect(tickets).toContain(orders.delivery!);
+    expect(tickets).not.toContain(orders.takeaway!);
   });
 
   const settle = async (orderId: string, method: string, reference?: string) => {
@@ -441,9 +479,8 @@ test("full day: sign-up, onboarding, setup, trading and business-day close", asy
     await shot(page, "invoices-settled");
   });
 
-  await test.step("9. Owner ends the cashier's shift and closes the business day", async () => {
-    // The Supervisor preset has no finance rights (see report), so the owner closes.
-    await ownerSignIn(page);
+  await test.step("9. Supervisor counts the drawer and closes the business day", async () => {
+    await staffSignIn(page, "supervisor");
     await page.goto("/payment-control");
     await page.getByRole("button", { name: "Daily closing", exact: true }).click();
     const drawer = (await state(page)).paymentOperations!.drawerSessions.find(
@@ -471,6 +508,7 @@ test("full day: sign-up, onboarding, setup, trading and business-day close", asy
   });
 
   await test.step("10. Owner connects Uber Eats for the branch (testing mode)", async () => {
+    await ownerSignIn(page);
     await page.goto("/seramet-setup");
     await page.getByRole("button", { name: /^Delivery integrations/ }).click();
     const panel = page

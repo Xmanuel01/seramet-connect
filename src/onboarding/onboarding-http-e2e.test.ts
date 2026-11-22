@@ -180,6 +180,10 @@ describe.sequential("guided onboarding over the HTTP API", () => {
             name: "Kitchen",
             stationType: "KITCHEN",
           });
+          await owner.expectOk("PUT", "/api/seramet/printing/kitchen-mode", {
+            branchId,
+            kitchenMode: "KDS_ONLY",
+          });
           return {};
         },
       ],
@@ -314,7 +318,7 @@ describe.sequential("guided onboarding over the HTTP API", () => {
       sid: sessionId,
     });
     const call = async <T = Record<string, unknown>>(
-      method: "GET" | "POST" | "PATCH",
+      method: "GET" | "POST" | "PATCH" | "PUT",
       path: string,
       body?: unknown,
     ) => {
@@ -336,7 +340,7 @@ describe.sequential("guided onboarding over the HTTP API", () => {
     return {
       provisioned,
       call,
-      async expectOk(method: "POST" | "PATCH", path: string, body: unknown) {
+      async expectOk(method: "POST" | "PATCH" | "PUT", path: string, body: unknown) {
         const result = await call(method, path, body);
         expect(result.status, `${path}: ${JSON.stringify(result.body)}`).toBeLessThan(300);
         return result.body;
