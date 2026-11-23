@@ -29,7 +29,19 @@ const line = (
   extra: Partial<Line> = {},
 ): Line => ({ id, name, category: "Menu", quantity, unitPrice, productionStation, ...extra });
 
-export function approvedReferenceSamples(paper: ReferencePaper): ReferenceSample[] {
+/**
+ * Integration results the server attaches before printing: the M-Pesa QR
+ * Safaricom issued for the bill, and KRA's eTIMS signature for the receipt.
+ */
+export type ReferenceIntegrations = {
+  mpesaQrModules?: string[];
+  etims?: OrderForPrint["etims"];
+};
+
+export function approvedReferenceSamples(
+  paper: ReferencePaper,
+  integrations: ReferenceIntegrations = {},
+): ReferenceSample[] {
   setConfigurationRepositoryForTests(new ConfigurationRepository(createDefaultDemoPlatformState()));
   const profile = SerametPrintService.getBranchHardwareProfile(
     DEMO_WESTLANDS_BRANCH_ID,
@@ -95,6 +107,7 @@ export function approvedReferenceSamples(paper: ReferencePaper): ReferenceSample
     deliveryCharge: 100,
     tax: 0,
     total: 2850,
+    ...(integrations.mpesaQrModules ? { mpesaQrModules: integrations.mpesaQrModules } : {}),
   };
   const receipt: OrderForPrint = {
     ...staff,
@@ -116,6 +129,7 @@ export function approvedReferenceSamples(paper: ReferencePaper): ReferenceSample
     total: 1000,
     paid: 1000,
     paymentBreakdown: [{ method: "M-Pesa", amount: 1000, reference: "TKM3QX81ZP" }],
+    ...(integrations.etims ? { etims: integrations.etims } : {}),
   };
   const production = (order: OrderForPrint, type: PrintJob["documentType"]) =>
     SerametPrintService.createProductionTicketJobs(profile, order, [], "NEW").jobs.find(

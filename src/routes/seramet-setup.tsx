@@ -18,6 +18,7 @@ import {
 import { useEffect, useState, type FormEvent } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
+import { EtimsSettingsCard } from "@/components/app/EtimsSettingsCard";
 import type {
   DuplicateStrategy,
   ImportKind,
@@ -974,6 +975,7 @@ function SetupCentre() {
               </form>
             </Panel>
           )}
+          {section === "TAX_SERVICE" && <EtimsSettingsCard />}
           {(section === "PAYMENTS" || section === "DELIVERY_INTEGRATIONS") && (
             <>
               {section === "PAYMENTS" && (

@@ -72,6 +72,17 @@ export type EtimsStatus =
       verifyUrl?: string;
       /** For credit notes: the CU number of the invoice being credited. */
       relatedCuInvoiceNumber?: string;
+      /**
+       * KRA OSCU signature details (TIS specification 6.23), when the receipt
+       * was signed through Seramet's eTIMS integration.
+       */
+      pin?: string;
+      sandbox?: boolean;
+      receiptCounter?: string;
+      internalData?: string;
+      signature?: string;
+      scuDateTime?: string;
+      taxTable?: { label: string; taxable: number; tax: number }[];
     }
   | { status: "PENDING"; queuedAt?: DisplayTime };
 

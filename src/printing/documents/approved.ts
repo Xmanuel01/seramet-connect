@@ -84,11 +84,34 @@ export interface DocumentBusiness {
 }
 
 /** Restaurant name, address and contact number, centred. Never the M-Pesa till. */
-function restaurantHeader(business: DocumentBusiness, width: number): string[] {
+function restaurantHeader(business: DocumentBusiness, width: number, pin?: string): string[] {
   return [
     ...centered(clean(business.name).toUpperCase(), width),
     ...centered(business.address, width),
     ...centered(clean(business.phone) ? `Tel: ${clean(business.phone)}` : undefined, width),
+    // A KRA eTIMS receipt shows the supplier's PIN (TIS specification, Article 3).
+    ...centered(clean(pin) ? `PIN: ${clean(pin)}` : undefined, width),
+  ];
+}
+
+/** KRA's SCU information block and per-rate tax table (TIS specification 6.21-6.23). */
+export function etimsDetailLines(etims: EtimsStatus | undefined, width: number, code: string) {
+  if (etims?.status !== "SIGNED" || !etims.signature) return [];
+  const rows = (etims.taxTable ?? []).map((row) =>
+    spread(row.label, `${money(row.taxable)}  VAT ${money(row.tax)}`, width),
+  );
+  return [
+    dashedSeparator(width),
+    ...(rows.length ? [`TAX (${code})`, ...rows.flat()] : []),
+    "SCU INFORMATION",
+    ...labelled("Date", etims.scuDateTime, width),
+    ...labelled("CU ID", etims.cuSerial, width),
+    ...labelled("CU Inv No", etims.cuInvoiceNumber, width),
+    ...labelled("Receipt", etims.receiptCounter, width),
+    ...wrap("Internal Data:", width),
+    ...wrap(etims.internalData, width),
+    ...wrap("Receipt Signature:", width),
+    ...wrap(etims.signature, width),
   ];
 }
 
@@ -300,6 +323,11 @@ export interface InvoicePaymentDetails {
   account?: string;
   /** Payload from a configured M-Pesa dynamic QR integration. Never invented. */
   qrPayload?: string;
+  /**
+   * Module rows of the QR image Safaricom issued (Daraja Dynamic QR), when the
+   * payload itself is not available. Drawn as issued.
+   */
+  qrModules?: string[];
 }
 
 export interface ApprovedInvoiceInput {
@@ -465,9 +493,11 @@ export function renderApprovedReceipt(
   const loyalty = input.loyalty;
   const points = (value: number | undefined) =>
     value === undefined ? undefined : value.toLocaleString("en-US");
+  const signed = input.etims?.status === "SIGNED" ? input.etims : undefined;
   const content = compose(width, [
-    restaurantHeader(input.business, width),
+    restaurantHeader(input.business, width, signed?.pin),
     solidSeparator(width),
+    signed?.sandbox && centered("eTIMS SANDBOX - NOT A VALID TAX RECEIPT", width),
     spread("RECEIPT", settled ? "[ PAID ]" : "", width),
     documentInfo(
       width,
@@ -483,6 +513,7 @@ export function renderApprovedReceipt(
     sideBySide
       ? besideEachOther(payments, fiscal, width, etimsWidth)
       : [...payments, ...(fiscal.length ? [dashedSeparator(width), ...fiscal] : [])],
+    etimsDetailLines(input.etims, width, code),
     loyalty && [
       dashedSeparator(width),
       ...labelled("Member", loyalty.memberCode, width),

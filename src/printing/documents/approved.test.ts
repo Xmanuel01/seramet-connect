@@ -317,8 +317,8 @@ for (const paper of PAPERS) {
       }
       expect(invoice).toMatch(/^\s+SUBTOTAL\s+2,750\.00$/m);
       expect(invoice).toMatch(/^\s+DELIVERY CHARGE\s+100\.00$/m);
-      // VAT is not configured on this order, so no VAT row is invented.
-      expect(invoice).not.toMatch(/\bVAT\b/);
+      // No VAT was charged: the approved "VAT (0%) 0.00" row.
+      expect(invoice).toMatch(/^\s+VAT \(0%\)\s+0\.00$/m);
       const grand = rows.findIndex((row) => row.startsWith("GRAND TOTAL"));
       expect(rows[grand]).toMatch(/^GRAND TOTAL\s+KES 2,850\.00$/);
       expect(rows[grand - 1]).toMatch(/^-+$/);
@@ -333,7 +333,39 @@ for (const paper of PAPERS) {
       expect(invoice).not.toMatch(/^\|.*Delivery/m);
     });
 
-    it("prints VAT from the recorded tax, added on top or included", () => {
+    it("prints VAT from the recorded tax with the configured rate, added on top or included", () => {
+      const rated = doc(
+        profile,
+        baseOrder({
+          deliveryCharge: 0,
+          subtotal: 2750,
+          tax: 440,
+          total: 3190,
+          taxRatesBps: [1600],
+        }),
+        "BILL",
+      );
+      expect(rated).toMatch(/^\s+VAT \(16%\)\s+440\.00$/m);
+      const ratedIncl = doc(
+        profile,
+        baseOrder({
+          deliveryCharge: 0,
+          subtotal: 2750,
+          tax: 379.31,
+          total: 2750,
+          taxRatesBps: [1600],
+        }),
+        "BILL",
+      );
+      expect(ratedIncl).toMatch(/^\s+VAT \(16% incl\.\)\s+379\.31$/m);
+      // Two different configured rates: no single rate to print.
+      expect(
+        doc(
+          profile,
+          baseOrder({ deliveryCharge: 0, tax: 440, total: 3190, taxRatesBps: [1600, 800] }),
+          "BILL",
+        ),
+      ).toMatch(/^\s+VAT\s+440\.00$/m);
       const exclusive = doc(
         profile,
         baseOrder({ deliveryCharge: 0, subtotal: 2750, tax: 440, total: 3190 }),
@@ -349,6 +381,7 @@ for (const paper of PAPERS) {
       expect(inclusive).toMatch(/^\s+VAT \(incl\.\)\s+379\.31$/m);
       expect(inclusive).toMatch(/^GRAND TOTAL\s+KES 2,750\.00$/m);
       profile.templateSettings.BILL.showTax = false;
+      // The template's "show tax" setting still hides the row entirely.
       expect(doc(profile, baseOrder({ tax: 440, total: 3290 }), "BILL")).not.toMatch(/\bVAT\b/);
     });
 
@@ -491,7 +524,7 @@ for (const paper of PAPERS) {
       expect(partial).toMatch(/^GRAND TOTAL\s+KES 1,000\.00$/m);
     });
 
-    it("shows VAT only when charged and eTIMS only from real fiscal data", () => {
+    it("shows the VAT row with the charged amount, and eTIMS only from real fiscal data", () => {
       const vat = doc(profile, paidOrder({ tax: 160, total: 1160, paid: 1160 }), "RECEIPT");
       expect(vat).toMatch(/^\s+VAT\s+160\.00$/m);
       const ctx = { paper, currency: "KES" } as const;

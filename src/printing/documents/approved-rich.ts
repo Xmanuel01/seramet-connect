@@ -86,7 +86,8 @@ export function orderTicketRich(input: OrderTicketInput, paper: RichPaper): Rich
   const indent = indentFor(paper);
   const items = input.lines.flatMap((item, i): RichBlock[] => [
     ...(i > 0 ? [line] : []),
-    text([run("item", `${quantity(item.quantity)} x  ${item.name}`)], {
+    // "2  x  Mbuzi Stew + Rice": the approved ticket's wider gaps around the x.
+    text([raw("item", `${quantity(item.quantity)}  x  `), run("item", item.name)], {
       hang: indent,
       pad: big ? 6 : 4,
     }),
@@ -151,7 +152,7 @@ const TRADE_WORDS =
   /^(restaurant|cafe|bar|grill|hotel|lounge|kitchen|bistro|eatery|pizzeria|bakery)$/i;
 
 /** "MONA SWAHILI" over "--- RESTAURANT ---" when the name ends in a trade word. */
-function headerBlocks(business: DocumentBusiness): RichBlock[] {
+function headerBlocks(business: DocumentBusiness, pin?: string): RichBlock[] {
   const words = clean(business.name).toUpperCase().split(" ").filter(Boolean);
   const sub = words.length > 1 && TRADE_WORDS.test(words.at(-1)!) ? words.pop()! : undefined;
   return [
@@ -163,7 +164,40 @@ function headerBlocks(business: DocumentBusiness): RichBlock[] {
     ...(clean(business.phone)
       ? [text([raw("phone", `\u260e ${clean(business.phone)}`)], { align: "center", pad: 1 })]
       : []),
+    // A KRA eTIMS receipt shows the supplier's PIN (TIS specification, Article 3).
+    ...(clean(pin) ? [centred("address", `PIN: ${clean(pin)}`, 1)] : []),
     { t: "rule", style: "solid", weight: "heavy", pad: 8 },
+  ];
+}
+
+/** KRA's per-rate tax table and SCU information block (TIS specification 6.21-6.23). */
+function scuBlocks(etims: EtimsStatus | undefined, currency: string): RichBlock[] {
+  if (etims?.status !== "SIGNED" || !etims.signature) return [];
+  const small = (label: string, value: string | undefined) =>
+    clean(value) ? [text([raw("small", `${label}: `), run("small", value!)], { pad: 1 })] : [];
+  return [
+    dashed,
+    ...((etims.taxTable ?? []).length
+      ? [
+          {
+            t: "table",
+            cols: [
+              { w: 30 },
+              { w: 35, align: "right", auto: true },
+              { w: 35, align: "right", auto: true },
+            ],
+            head: ["TAX", `TAXABLE (${currency})`, `VAT (${currency})`],
+            rows: etims.taxTable!.map((row) => [row.label, money(row.taxable), money(row.tax)]),
+          } as RichBlock,
+        ]
+      : []),
+    text([run("payHead", "SCU INFORMATION")], { pad: 3 }),
+    ...small("Date", etims.scuDateTime),
+    ...small("CU ID", etims.cuSerial),
+    ...small("CU Invoice No", etims.cuInvoiceNumber),
+    ...small("Receipt", etims.receiptCounter),
+    ...small("Internal Data", etims.internalData),
+    ...small("Receipt Signature", etims.signature),
   ];
 }
 
@@ -266,6 +300,8 @@ export function invoiceRich(
   const till = clean(input.mpesa?.till);
   const paybill = clean(input.mpesa?.paybill);
   const payload = clean(input.mpesa?.qrPayload);
+  const issued = input.mpesa?.qrModules;
+  const modules = issued?.length ? issued : payload ? qrModules(payload) : undefined;
   const details: RichBlock[] = [
     ...(till ? [text([raw("payText", "Till No. "), run("payText", till)], { pad: 3 })] : []),
     ...(paybill ? [field("Paybill", paybill, "payText", "payText")] : []),
@@ -276,7 +312,7 @@ export function invoiceRich(
   ];
   const pay: RichBlock[] =
     (till || paybill) && balance > 0
-      ? payload
+      ? modules
         ? [
             {
               t: "columns",
@@ -284,9 +320,7 @@ export function invoiceRich(
               cols: [
                 {
                   w: 38,
-                  blocks: [
-                    { t: "qr", modules: qrModules(payload), size: paper === "80mm" ? 190 : 130 },
-                  ],
+                  blocks: [{ t: "qr", modules, size: paper === "80mm" ? 190 : 130 }],
                 },
                 {
                   w: 62,
@@ -379,8 +413,13 @@ function etimsBlocks(etims: EtimsStatus, paper: RichPaper): RichBlock[] {
           } as RichBlock,
         ]
       : []),
-    centred("small", `CU: ${clean(etims.cuSerial)}`, 1),
-    centred("small", `Inv: ${clean(etims.cuInvoiceNumber)}`, 1),
+    // With KRA's full SCU block printed below, the QR caption is the CU invoice number.
+    ...(etims.signature
+      ? [centred("small", clean(etims.cuInvoiceNumber), 1)]
+      : [
+          centred("small", `CU: ${clean(etims.cuSerial)}`, 1),
+          centred("small", `Inv: ${clean(etims.cuInvoiceNumber)}`, 1),
+        ]),
   ];
 }
 
@@ -390,6 +429,7 @@ export function receiptRich(
   currency: string,
 ): RichDocument {
   const settled = input.paid + 0.005 >= input.totals.total;
+  const signed = input.etims?.status === "SIGNED" ? input.etims : undefined;
   const balance = Math.max(0, Math.round((input.totals.total - input.paid) * 100) / 100);
   const payments = paymentBlocks(input.payments, input.change, balance, currency);
   const loyalty = input.loyalty;
@@ -413,7 +453,8 @@ export function receiptRich(
     v: 1,
     paper,
     blocks: [
-      ...headerBlocks(input.business),
+      ...headerBlocks(input.business, signed?.pin),
+      ...(signed?.sandbox ? [centred("banner", "eTIMS SANDBOX - NOT A VALID TAX RECEIPT", 2)] : []),
       {
         t: "spread",
         left: [run("title", "RECEIPT")],
@@ -443,6 +484,7 @@ export function receiptRich(
             } as RichBlock,
           ]
         : payments),
+      ...scuBlocks(input.etims, currency),
       ...(loyaltyBlocks.length ? [dashed, ...loyaltyBlocks] : []),
       { t: "rule", style: "solid", pad: 8 },
       centred("thanks", "THANK YOU FOR YOUR BUSINESS", 4),

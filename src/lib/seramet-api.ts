@@ -86,6 +86,7 @@ import { handleObjectStorageApi } from "@/server/object-storage-api";
 import { handleRealtimeApi } from "@/server/realtime-api";
 import { findOverdueDurableWork } from "@/server/worker-health";
 import { handlePrintingApi } from "@/server/printing-api";
+import { handleEtimsApi } from "@/server/etims/etims-api";
 import { handleScannerInternalApi } from "@/server/scanner-internal-api";
 
 type MutationRequest = {
@@ -285,6 +286,8 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
     if (emailResponse) return emailResponse;
     const printingResponse = await handlePrintingApi(request, env, repo);
     if (printingResponse) return printingResponse;
+    const etimsResponse = await handleEtimsApi(request, env);
+    if (etimsResponse) return etimsResponse;
 
     const registrationResponse = await handleRegistrationApi(request, env);
     if (registrationResponse) return registrationResponse;

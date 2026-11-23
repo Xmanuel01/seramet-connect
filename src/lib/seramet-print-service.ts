@@ -185,6 +185,15 @@ export type OrderForPrint = {
   receiptNumber?: string;
   invoiceNumber?: string;
   tillNumber?: string;
+  /**
+   * Rates (basis points) of the branch's active VAT rules, for the "VAT (16%)"
+   * label. The amount printed is always the recorded tax.
+   */
+  taxRatesBps?: number[];
+  /** Module rows of a real M-Pesa dynamic QR for the amount due (Daraja). */
+  mpesaQrModules?: string[];
+  /** KRA eTIMS signature for a receipt, from the OSCU's signed response. */
+  etims?: import("@/printing/documents").EtimsStatus;
   paymentReference?: string;
   paymentBreakdown?: { method: string; amount: number; reference?: string }[];
   loyaltySummary?: {
@@ -1314,9 +1323,11 @@ function renderApprovedCustomerDocument(
   const delivery = order.deliveryCharge ?? 0;
   const service = order.serviceCharge ?? 0;
   const discount = order.discount ?? 0;
-  // VAT prints only when tax was charged (and the template shows tax). Whether
-  // it was added on top or is contained in the prices follows from the recorded
-  // figures; no rate is printed because none is recorded on the transaction.
+  // VAT always prints when the template shows tax, as in the approved design:
+  // "VAT (0%) 0.00" when none was charged. The rate comes from the branch's
+  // configured VAT rule; with no single configured rate it prints as "VAT".
+  // Whether VAT was added on top or is inside the prices follows from the
+  // recorded figures. The amount is always the recorded tax.
   const cents = (value: number) => Math.round(value * 100);
   const exclusive =
     cents(order.subtotal) +
@@ -1325,10 +1336,18 @@ function renderApprovedCustomerDocument(
       cents(discount) +
       cents(order.tax) ===
     cents(order.total);
-  const showVat = order.tax !== 0 && template.showTax;
+  const showVat = template.showTax;
+  const vatLabel = (() => {
+    if (cents(order.tax) === 0) return "VAT (0%)";
+    const rates = [...new Set((order.taxRatesBps ?? []).filter((r) => r > 0))];
+    const rate =
+      rates.length === 1 ? `${Number((rates[0]! / 100).toFixed(2)).toString()}%` : undefined;
+    if (exclusive) return rate ? `VAT (${rate})` : "VAT";
+    return rate ? `VAT (${rate} incl.)` : "VAT (incl.)";
+  })();
   const totals = {
     subtotal: order.subtotal,
-    ...(showVat ? { vat: order.tax, vatLabel: exclusive ? "VAT" : "VAT (incl.)" } : {}),
+    ...(showVat ? { vat: order.tax, vatLabel } : {}),
     ...(delivery ? { deliveryCharge: delivery } : {}),
     ...(service ? { serviceCharge: service } : {}),
     ...(discount ? { discount } : {}),
@@ -1380,6 +1399,7 @@ function renderApprovedCustomerDocument(
         ...(order.change ? { change: order.change } : {}),
         paid: applied,
         ...(order.loyaltySummary ? { loyalty: order.loyaltySummary } : {}),
+        ...(order.etims ? { etims: order.etims } : {}),
       },
       ctx,
     );
@@ -1414,9 +1434,16 @@ function renderApprovedCustomerDocument(
       lines,
       totals,
       paid: order.paid ?? 0,
-      // No M-Pesa dynamic QR payload reaches printing yet, so the till prints
-      // without a QR and says so; see docs on the QR dependency.
-      ...(till ? { mpesa: { till } } : {}),
+      // The scan-to-pay QR is the one Safaricom issued for this bill (see
+      // server/print-payment-qr.ts); without it the till prints alone and says so.
+      ...(till
+        ? {
+            mpesa: {
+              till,
+              ...(order.mpesaQrModules?.length ? { qrModules: order.mpesaQrModules } : {}),
+            },
+          }
+        : {}),
       paymentInstructions: till
         ? instructions
         : [...(bank.length ? [bank.join(", ")] : []), ...instructions],

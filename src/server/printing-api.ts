@@ -16,6 +16,8 @@ import {
 import type { TransactionRepository } from "@/lib/seramet-repository";
 import { SerametPrintService, type OrderForPrint } from "@/lib/seramet-print-service";
 import { PlatformConfigurationError } from "@/platform/repositories/configuration-repository";
+import { printablePaymentQr, type PrintPaymentQrInput } from "@/server/print-payment-qr";
+import { EtimsError, fiscalizeReceipt } from "@/server/etims/etims-service";
 import {
   renderApprovedInvoice,
   renderApprovedReceipt,
@@ -953,6 +955,51 @@ export async function handlePrintingApi(
     if (!printOrder) throw new SerametHttpError(404, "Authoritative document unavailable");
     if (!printer.roles.some((role) => role === input.documentType))
       throw new SerametHttpError(403, "Printer is not assigned to this document");
+    printOrder.taxRatesBps = await activeVatRatesBps(db, actor.tenantId, actor.branchId);
+    // KRA eTIMS: a receipt is signed by the OSCU before it prints (TIS
+    // specification, Article 10). Reprints reuse the stored signature.
+    if (receipt) {
+      const source = state.bills.find((item) => item.id === receipt.invoiceId);
+      const order = state.orders.find((item) => item.id === receipt.orderId);
+      const lines = source?.lines ?? order?.lines ?? [];
+      try {
+        const etims = await fiscalizeReceipt(env, db, actor, actor.branchId, {
+          receiptId: receipt.id,
+          receiptNumber: printOrder.receiptNumber ?? receipt.id,
+          issuedAt: receipt.issuedAt,
+          timeZone: profile.printIdentity.timeZone,
+          lines: lines.map((line) => ({
+            ...(line.productId ? { productId: line.productId } : {}),
+            name: line.name,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice,
+          })),
+          serviceCharge: printOrder.serviceCharge ?? 0,
+          deliveryCharge: printOrder.deliveryCharge ?? 0,
+          discount: printOrder.discount ?? 0,
+          total: printOrder.total,
+          paymentMethods: receipt.paymentBreakdown.map((payment) => String(payment.method)),
+          customerName: receipt.customer,
+          cashier: { id: actor.id, name: receipt.cashier || actor.name },
+          tradeName: profile.printIdentity.businessName,
+          address: profile.printIdentity.address,
+        });
+        if (etims) printOrder.etims = etims;
+      } catch (error) {
+        if (error instanceof EtimsError) throw new SerametHttpError(error.status, error.message);
+        throw error;
+      }
+    }
+    // Image printers print a real M-Pesa scan-to-pay QR on bills with an amount due.
+    if (bill && input.documentType !== "RECEIPT" && printer.renderingMode === "RASTER_ESC_POS") {
+      const modules = await billPaymentQr(env, repository, db, actor, {
+        billId: bill.id,
+        branchId: actor.branchId,
+        amountDue: printOrder.total - (printOrder.paid ?? 0),
+        currency: profile.printIdentity.currency ?? "KES",
+      });
+      if (modules) printOrder.mpesaQrModules = modules;
+    }
     const job = SerametPrintService.createDocumentJob(
       profile,
       printOrder,
@@ -1096,6 +1143,66 @@ function diagnosticContent(
   ]
     .join("\n")
     .trimEnd();
+}
+
+/**
+ * The M-Pesa QR for a bill and amount, issued once and then reused, so a
+ * reprint or a retried delivery prints the identical code (and the signed
+ * print identity does not change).
+ */
+async function billPaymentQr(
+  env: SerametEnv,
+  repository: TransactionRepository,
+  db: D1Database,
+  actor: ServerActor,
+  input: PrintPaymentQrInput,
+): Promise<string[] | undefined> {
+  const id = `PRINT-QR:${input.billId}:${Math.round(input.amountDue * 100)}`;
+  const stored = async () => {
+    const row = await db
+      .prepare("SELECT metadata_json FROM audit_events WHERE tenant_id=? AND branch_id=? AND id=?")
+      .bind(actor.tenantId, actor.branchId, id)
+      .first<{ metadata_json: string }>();
+    const modules = row
+      ? (JSON.parse(row.metadata_json) as { modules?: unknown }).modules
+      : undefined;
+    return Array.isArray(modules) && modules.every((r) => typeof r === "string")
+      ? (modules as string[])
+      : undefined;
+  };
+  try {
+    const existing = await stored();
+    if (existing) return existing;
+    const issued = await printablePaymentQr(env, repository, actor, input);
+    if (!issued.ok) return undefined;
+    await auditStatement(db, actor, id, "PRINT_PAYMENT_QR_ISSUED", input.billId, {
+      modules: issued.modules,
+      paymentMethodId: issued.paymentMethodId,
+    }).run();
+    return await stored();
+  } catch {
+    // The bill still prints, with the till and amount and no QR.
+    return undefined;
+  }
+}
+
+/** Rates of the branch's active VAT rules, for the "VAT (16%)" label on bills and receipts. */
+async function activeVatRatesBps(db: D1Database, tenantId: string, branchId: string) {
+  const now = new Date().toISOString();
+  try {
+    const rows = await db
+      .prepare(
+        `SELECT rate_bps FROM tax_service_rules
+         WHERE tenant_id=? AND rule_type='TAX' AND active=1 AND (branch_id=? OR branch_id IS NULL)
+           AND effective_from<=? AND (effective_to IS NULL OR effective_to>?)`,
+      )
+      .bind(tenantId, branchId, now, now)
+      .all<{ rate_bps: number }>();
+    return (rows.results ?? []).map((row) => Number(row.rate_bps)).filter(Number.isFinite);
+  } catch {
+    // The rate only labels the VAT row; without it the row prints as "VAT".
+    return [];
+  }
 }
 
 const DIAGNOSTIC_LINE = {

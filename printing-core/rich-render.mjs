@@ -139,12 +139,15 @@ function glyph(f, char) {
   return g;
 }
 
-/** Printable ASCII and the phone sign; anything else prints as "?". */
+/**
+ * Printable ASCII and the phone sign; anything else prints as "?". Line
+ * breaks and tabs become spaces; deliberate runs of spaces (the approved
+ * "2  x  Item" spacing) are kept.
+ */
 export function richText(value) {
   return [...String(value ?? "")]
-    .map((c) => (c === PHONE || (c >= " " && c <= "~") ? c : c === "\n" ? " " : "?"))
-    .join("")
-    .replace(/\s+/g, " ");
+    .map((c) => (c === PHONE || (c >= " " && c <= "~") ? c : /\s/.test(c) ? " " : "?"))
+    .join("");
 }
 
 function textWidth(f, text, tracking = 0) {

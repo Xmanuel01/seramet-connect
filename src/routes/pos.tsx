@@ -829,6 +829,9 @@ function POS() {
     cashier: currentUser.name,
     waiter: currentUser.name,
     createdAt: activeOrder?.createdAt ?? new Date().toISOString(),
+    taxRatesBps: operationalMenu.pricingRules
+      .filter((rule) => rule.rule_type === "TAX")
+      .map((rule) => rule.rate_bps),
     customer:
       linkedCustomer?.displayName ??
       (isOnlineSource

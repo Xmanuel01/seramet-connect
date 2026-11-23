@@ -55,14 +55,14 @@ function inkBands(b: RichBitmap) {
  * approved design, then update these hashes.
  */
 const GOLDEN: Record<string, string> = {
-  "kot-80mm": "688944e1bbeec884",
-  "bot-80mm": "ee550d7a230531b2",
-  "invoice-80mm": "53066a52e994b9aa",
-  "receipt-80mm": "d9e31d1d4f14dedc",
-  "kot-58mm": "8b6e2ae860be3353",
-  "bot-58mm": "38b2031a22756874",
-  "invoice-58mm": "1424953570361dc0",
-  "receipt-58mm": "0ae134dc386bebfc",
+  "kot-80mm": "bb3f08eaef827291",
+  "bot-80mm": "2fdf4355ffe15a95",
+  "invoice-80mm": "8354a9eeefae65e8",
+  "receipt-80mm": "17178def7a7dc6e6",
+  "kot-58mm": "543a3e64e45b8435",
+  "bot-58mm": "8880cfdde23becf3",
+  "invoice-58mm": "f458c723b0e58d40",
+  "receipt-58mm": "bd379f028462e96f",
 };
 
 describe("approved documents: visual regression", () => {
@@ -356,5 +356,105 @@ describe("rich documents: validation and printer limits", () => {
     // 300 dpi printers keep the physical size: the bitmap is scaled up.
     const hi = renderRichForProfile(job.rich!, { printableWidthDots: 832, dpi: 300 });
     expect(hi.width).toBe(832);
+  });
+});
+
+describe("scan-to-pay QR and eTIMS on the printed documents", () => {
+  const business = {
+    name: "Mona Swahili Restaurant",
+    address: "Kipro Centre, Westlands, Sports Road, Nairobi",
+    phone: "+254 719 427 919",
+  };
+
+  it("prints the QR Safaricom issued exactly as issued, beside SCAN TO PAY", () => {
+    const issued = QRCode.create("ISSUED BY DARAJA - TEST", { errorCorrectionLevel: "M" }).modules;
+    const modules = Array.from({ length: issued.size }, (_, r) =>
+      Array.from({ length: issued.size }, (_, c) => (issued.get(r, c) ? "1" : "0")).join(""),
+    );
+    for (const paper of PAPERS) {
+      const invoice = renderApprovedInvoice(
+        {
+          business,
+          invoiceNumber: "INV-0633U",
+          date: "22 Nov 2026",
+          time: "10:25 AM",
+          lines: [{ name: "Ugali", quantity: 3, unitPrice: 150 }],
+          totals: { subtotal: 450, total: 450 },
+          mpesa: { till: "4235484", qrModules: modules },
+        },
+        { paper, currency: "KES" },
+      );
+      const json = JSON.stringify(invoice.rich);
+      expect(json).toContain(JSON.stringify(modules));
+      expect(json).toContain("SCAN TO PAY");
+      expect(json).not.toContain("not available");
+      // Text-mode printers cannot print the QR, so their copy keeps the till fallback.
+      expect(invoice.content).toContain("PAY WITH M-PESA");
+    }
+  });
+
+  it("prints KRA's SCU information, PIN and tax table on a signed receipt", () => {
+    const etims = {
+      status: "SIGNED" as const,
+      sandbox: true,
+      pin: "P051234567X",
+      cuSerial: "KRACU0100000001",
+      cuInvoiceNumber: "KRACU0100000001/12",
+      receiptCounter: "12/40 NS",
+      internalData: "WLQ2-KGAQ-BUXZ-YMJ2-ZFPU-G4WL-KI",
+      signature: "CVEQ-AIRC-UQEM-Z7GP",
+      scuDateTime: "22/11/2026 11:36:10",
+      verifyUrl:
+        "https://etims-sbx.kra.go.ke/common/link/etims/receipt/indexEtimsReceiptData?Data=TEST",
+      taxTable: [
+        { label: "B-16%", taxable: 1000, tax: 137.93 },
+        { label: "E-8%", taxable: 0, tax: 0 },
+      ],
+    };
+    for (const paper of PAPERS) {
+      const receipt = renderApprovedReceipt(
+        {
+          business,
+          receiptNumber: "RCP-0386S",
+          date: "22 Nov 2026",
+          time: "11:36 AM",
+          lines: [{ name: "Eggs", quantity: 4, unitPrice: 250 }],
+          totals: { subtotal: 1000, vat: 137.93, vatLabel: "VAT (16% incl.)", total: 1000 },
+          payments: [{ method: "M-Pesa", amount: 1000, reference: "TKM3QX81ZP" }],
+          paid: 1000,
+          etims,
+        },
+        { paper, currency: "KES" },
+      );
+      const flat = receipt.content.replace(/\s+/g, " ");
+      for (const text of [
+        "PIN: P051234567X",
+        "eTIMS SANDBOX - NOT A VALID TAX RECEIPT",
+        "SCU INFORMATION",
+        "22/11/2026 11:36:10",
+        "KRACU0100000001/12",
+        "12/40 NS",
+        "WLQ2-KGAQ-BUXZ-YMJ2-ZFPU-G4WL-KI",
+        "CVEQ-AIRC-UQEM-Z7GP",
+        "B-16%",
+      ])
+        expect(flat, text).toContain(text);
+      const json = JSON.stringify(receipt.rich);
+      for (const text of [
+        "PIN: ",
+        "SCU INFORMATION",
+        "eTIMS VERIFY",
+        "CVEQ-AIRC-UQEM-Z7GP",
+        "B-16%",
+      ])
+        expect(json, text).toContain(text);
+      expect(json).toContain('"t":"qr"');
+      const bitmap = renderRichDocument(receipt.rich!, DOTS[paper]);
+      const margin = paper === "80mm" ? 8 : 4;
+      for (let y = 0; y < bitmap.height; y++) {
+        expect(ink(bitmap, margin - 1, y)).toBe(false);
+        expect(ink(bitmap, bitmap.width - margin, y)).toBe(false);
+      }
+    }
   });
 });
