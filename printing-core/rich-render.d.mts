@@ -49,7 +49,8 @@ export type RichBlock =
   | { t: "box"; runs: RichRun[]; align?: Align }
   | {
       t: "table";
-      cols: Array<{ w: number; align?: Align }>;
+      /** auto: sized to the widest header or value; others share the rest by weight. */
+      cols: Array<{ w: number; align?: Align; auto?: boolean }>;
       head?: string[];
       rows: Array<Array<string | string[]>>;
     }

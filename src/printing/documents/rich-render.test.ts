@@ -57,12 +57,12 @@ function inkBands(b: RichBitmap) {
 const GOLDEN: Record<string, string> = {
   "kot-80mm": "688944e1bbeec884",
   "bot-80mm": "ee550d7a230531b2",
-  "invoice-80mm": "a787fa148e1febd6",
-  "receipt-80mm": "6c09226a81f0127c",
+  "invoice-80mm": "53066a52e994b9aa",
+  "receipt-80mm": "d9e31d1d4f14dedc",
   "kot-58mm": "8b6e2ae860be3353",
   "bot-58mm": "38b2031a22756874",
-  "invoice-58mm": "0f46383205691e58",
-  "receipt-58mm": "7dd77414b652f080",
+  "invoice-58mm": "1424953570361dc0",
+  "receipt-58mm": "0ae134dc386bebfc",
 };
 
 describe("approved documents: visual regression", () => {
@@ -169,6 +169,51 @@ describe("approved documents: layout behaviour", () => {
         expect(ink(bitmap, bitmap.width - margin, y)).toBe(false);
       }
       expect(JSON.stringify(doc)).toContain(long);
+    }
+  });
+
+  it("sizes money columns to their values so names get the room and amounts never break", () => {
+    const lines = [
+      { name: "Kenyan Tea / African Tea", quantity: 1, unitPrice: 250 },
+      { name: "Whole roast goat for twenty guests", quantity: 12.5, unitPrice: 125000 },
+    ];
+    for (const paper of PAPERS) {
+      const doc = renderApprovedReceipt(
+        {
+          business: { name: "Mona Swahili Restaurant" },
+          receiptNumber: "RCP-1",
+          date: "22 Nov 2026",
+          time: "11:36 AM",
+          lines,
+          totals: { subtotal: 1562750, total: 1562750 },
+          payments: [{ method: "Card", amount: 1562750 }],
+          paid: 1562750,
+        },
+        { paper, currency: "KES" },
+      ).rich!;
+      const table = doc.blocks.find((b) => b.t === "table") as Extract<
+        RichDocument["blocks"][number],
+        { t: "table" }
+      >;
+      expect(table.cols.filter((c) => c.auto)).toHaveLength(paper === "80mm" ? 3 : 2);
+      const bitmap = renderRichDocument(doc, DOTS[paper]);
+      const margin = paper === "80mm" ? 8 : 4;
+      for (let y = 0; y < bitmap.height; y++) {
+        expect(ink(bitmap, margin - 1, y)).toBe(false);
+        expect(ink(bitmap, bitmap.width - margin, y)).toBe(false);
+      }
+      // On 80mm the reference item fits on one line: its row is as tall as a one-line row.
+      if (paper === "80mm") {
+        const one = renderRichDocument(
+          { ...doc, blocks: [{ ...table, rows: [table.rows[0]!] }] },
+          DOTS[paper],
+        ).height;
+        const header = renderRichDocument(
+          { ...doc, blocks: [{ ...table, rows: [["1", "Eggs", "250.00", "250.00"]] }] },
+          DOTS[paper],
+        ).height;
+        expect(one).toBe(header);
+      }
     }
   });
 

@@ -34,7 +34,7 @@ export const RICH_STYLES = {
     docNo: ["sansBold", 30],
     infoLabel: ["sansBold", 24],
     infoValue: ["sans", 24],
-    th: ["sansBold", 20],
+    th: ["sansBold", 18],
     td: ["sans", 22],
     amountLabel: ["sans", 24],
     amount: ["sans", 24],
@@ -85,7 +85,7 @@ const GEOMETRY = {
     dash: 10,
     dashGap: 7,
     rulePad: 10,
-    cellX: 7,
+    cellX: 6,
     cellY: 5,
     radius: 9,
   },
@@ -450,11 +450,27 @@ function layoutBlock(paper, block, width, depth = 0) {
 
     case "table": {
       const t = g.rule;
-      const weights = block.cols.map((col) => col.w);
-      const total = weights.reduce((a, b) => a + b, 0);
       const inner = width - t * (block.cols.length + 1);
-      const widths = weights.map((w) => Math.floor((inner * w) / total));
-      widths[1] += inner - widths.reduce((a, b) => a + b, 0);
+      // "auto" columns (quantities, money) shrink to their widest header or
+      // value on one line; the other columns share what is left by weight, so
+      // item names get every dot the numbers do not need.
+      const fit = (i) => {
+        const cells = [
+          ...(block.head ? [[block.head[i], "th"]] : []),
+          ...block.rows.map((row) => [row[i], "td"]),
+        ];
+        let widest = 0;
+        for (const [cell, s] of cells)
+          for (const part of Array.isArray(cell) ? cell : [cell])
+            widest = Math.max(widest, textWidth(font(paper, s), richText(part)));
+        return Math.min(widest + 2 * g.cellX, Math.floor(inner * 0.4));
+      };
+      const widths = block.cols.map((col, i) => (col.auto ? fit(i) : 0));
+      const flexible = block.cols.map((col, i) => (col.auto ? -1 : i)).filter((i) => i >= 0);
+      const left = inner - widths.reduce((a, b) => a + b, 0);
+      const weight = flexible.reduce((sum, i) => sum + block.cols[i].w, 0);
+      for (const i of flexible) widths[i] = Math.floor((left * block.cols[i].w) / weight);
+      widths[flexible[0] ?? 0] += inner - widths.reduce((a, b) => a + b, 0);
       const rowLayout = (cells, style) =>
         cells.map((cell, i) =>
           runsLayout(
@@ -682,7 +698,12 @@ export function validateRichDocument(doc) {
       if (b.t === "table") {
         if (!Array.isArray(b.cols) || b.cols.length < 2 || b.cols.length > 6)
           throw new Error("INVALID_RICH_DOCUMENT");
-        for (const col of b.cols) num(col.w, 1, 100);
+        for (const col of b.cols) {
+          num(col.w, 1, 100);
+          if (col.auto !== undefined && typeof col.auto !== "boolean")
+            throw new Error("INVALID_RICH_DOCUMENT");
+        }
+        if (b.cols.every((col) => col.auto)) throw new Error("INVALID_RICH_DOCUMENT");
         const cell = (value) => (Array.isArray(value) ? value.forEach(str) : str(value));
         if (b.head) b.head.forEach(cell);
         if (!Array.isArray(b.rows) || b.rows.length > 200) throw new Error("INVALID_RICH_DOCUMENT");

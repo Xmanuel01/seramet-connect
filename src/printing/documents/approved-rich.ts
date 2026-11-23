@@ -208,10 +208,10 @@ function itemsTable(lines: SaleLine[], currency: string, paper: RichPaper): Rich
     return {
       t: "table",
       cols: [
-        { w: 10, align: "center" },
+        { w: 10, align: "center", auto: true },
         { w: 40 },
-        { w: 24, align: "right" },
-        { w: 26, align: "right" },
+        { w: 24, align: "right", auto: true },
+        { w: 26, align: "right", auto: true },
       ],
       head: ["QTY", "ITEM", `UNIT (${currency})`, `TOTAL (${currency})`],
       rows: lines.map((line) => [
@@ -223,7 +223,11 @@ function itemsTable(lines: SaleLine[], currency: string, paper: RichPaper): Rich
     };
   return {
     t: "table",
-    cols: [{ w: 12, align: "center" }, { w: 55 }, { w: 33, align: "right" }],
+    cols: [
+      { w: 12, align: "center", auto: true },
+      { w: 55 },
+      { w: 33, align: "right", auto: true },
+    ],
     head: ["QTY", "ITEM", `TOTAL (${currency})`],
     rows: lines.map((line) => [
       quantity(line.quantity),
