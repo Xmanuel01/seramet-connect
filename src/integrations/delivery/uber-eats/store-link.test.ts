@@ -168,7 +168,10 @@ describe("Uber Eats store link", () => {
       integrator_store_id: "branch-a",
       is_order_manager: true,
       require_manual_acceptance: false,
-      integration_enabled: true,
+      webhooks_config: {
+        schedule_order_webhooks: { is_enabled: true },
+        webhooks_version: "1.0.0",
+      },
     });
   });
 

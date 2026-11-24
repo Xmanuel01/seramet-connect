@@ -241,8 +241,17 @@ export async function provisionUberStore(input: {
         integrator_brand_id: input.integratorBrandId,
         is_order_manager: true,
         require_manual_acceptance: false,
-        integration_enabled: true,
-        webhooks_config: { webhooks_version: "1.0.0" },
+        allowed_customer_requests: {
+          allow_single_use_items_requests: false,
+          allow_special_instruction_requests: true,
+        },
+        // Version 1.0.0 is the lowest that sends orders.scheduled.notification for pre-orders.
+        webhooks_config: {
+          order_release_webhooks: { is_enabled: true },
+          schedule_order_webhooks: { is_enabled: true },
+          delivery_status_webhooks: { is_enabled: true },
+          webhooks_version: "1.0.0",
+        },
       }),
     },
   );
