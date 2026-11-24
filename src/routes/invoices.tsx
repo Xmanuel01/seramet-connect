@@ -4,6 +4,7 @@ import { useBusinessToday } from "@/hooks/use-business-today";
 import { useEffect, useRef, useState } from "react";
 import { DocumentEmailDialog } from "@/components/app/DocumentEmailDialog";
 import { DocumentTextPreview } from "@/components/app/DocumentTextPreview";
+import type { RichDocument } from "@/printing/documents";
 import { InvoiceSplitDialog } from "@/components/app/InvoiceSplitDialog";
 import { invoiceDisplayName } from "@/lib/invoice-split";
 import { AppOrderCollect } from "@/components/app/AppOrderCollect";
@@ -89,6 +90,7 @@ type PrintPreviewState = {
   documentType: "BILL" | "RECEIPT" | "INVOICE";
   template: string;
   content: string;
+  rich?: RichDocument;
 };
 
 function InvoiceDeliveryActions({
@@ -394,6 +396,7 @@ function Invoices() {
         documentType,
         template: job.template,
         content: job.content,
+        ...(job.rich ? { rich: job.rich } : {}),
       });
       logDelivery(
         createDeliveryLog(
@@ -1313,7 +1316,7 @@ function Invoices() {
           </DialogHeader>
           {printPreview && (
             <div className="space-y-4">
-              <DocumentTextPreview content={printPreview.content} />
+              <DocumentTextPreview content={printPreview.content} rich={printPreview.rich} />
               <div className="flex flex-wrap justify-end gap-2">
                 <Btn onClick={() => setPrintPreview(null)}>Close</Btn>
                 <Btn

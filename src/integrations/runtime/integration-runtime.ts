@@ -107,6 +107,12 @@ export class IntegrationRuntime {
     customerPhone?: string;
     customer?: Record<string, string>;
     deviceId?: string;
+    /**
+     * QR only: when this idempotency key already created the intent (a bill
+     * reprint), ask the provider for the same intent's QR again instead of
+     * returning without one. No new intent or state change is made.
+     */
+    reissueQrOnReplay?: boolean;
   }) {
     const method = this.dependencies.configuration
       .listPaymentMethods(input.tenantId, true)
@@ -163,6 +169,10 @@ export class IntegrationRuntime {
       `Created ${method.displayName} payment intent`,
     );
     if (created.replayed && created.intent.providerReference) {
+      if (input.operation === "QR_PAYMENT" && input.reissueQrOnReplay) {
+        const provider = await operation({ intent: created.intent }, connection, context);
+        return { intent: created.intent, provider, replayed: true };
+      }
       return { intent: created.intent, replayed: true };
     }
     const result = await operation(

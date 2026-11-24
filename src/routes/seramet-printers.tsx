@@ -31,6 +31,7 @@ import {
   printerRoleLabels,
 } from "@/lib/printer-labels";
 import { solidRules } from "../../printing-core/solid-rules.mjs";
+import { RichDocumentPreview } from "@/components/app/DocumentTextPreview";
 
 export const Route = createFileRoute("/seramet-printers")({
   head: () => ({
@@ -328,13 +329,11 @@ function SerametPrinters() {
     () =>
       profile
         ? {
-            BILL: SerametPrintService.createDocumentJob(profile, previewOrder, "BILL").content,
-            RECEIPT: SerametPrintService.createDocumentJob(profile, previewOrder, "RECEIPT")
-              .content,
-            INVOICE: SerametPrintService.createDocumentJob(profile, previewOrder, "INVOICE")
-              .content,
+            BILL: SerametPrintService.createDocumentJob(profile, previewOrder, "BILL"),
+            RECEIPT: SerametPrintService.createDocumentJob(profile, previewOrder, "RECEIPT"),
+            INVOICE: SerametPrintService.createDocumentJob(profile, previewOrder, "INVOICE"),
           }
-        : { BILL: "", RECEIPT: "", INVOICE: "" },
+        : undefined,
     [previewOrder, profile],
   );
   const productionPreviews = useMemo(
@@ -665,9 +664,15 @@ function SerametPrinters() {
                 {template.showPayment ? "shown" : "hidden"}
                 {template.showQrCode ? " · QR code" : ""}
               </p>
-              <pre className="mt-3 max-h-56 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-[10px] leading-none text-foreground">
-                {solidRules(customerPreviews[template.documentType] ?? "")}
-              </pre>
+              {customerPreviews?.[template.documentType]?.rich ? (
+                <div className="mt-3 max-h-96 overflow-auto">
+                  <RichDocumentPreview document={customerPreviews[template.documentType].rich!} />
+                </div>
+              ) : (
+                <pre className="mt-3 max-h-56 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-[10px] leading-none text-foreground">
+                  {solidRules(customerPreviews?.[template.documentType]?.content ?? "")}
+                </pre>
+              )}
             </article>
           ))}
           {productionPreviews.map((job) => (
@@ -679,9 +684,15 @@ function SerametPrinters() {
                 {documentTypeLabels[job.documentType] ?? job.documentType}
                 {job.kitchenDelivery === "KDS_DISPLAY" ? " (kitchen screen)" : ""}
               </div>
-              <pre className="max-h-72 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-[10px] leading-none text-foreground">
-                {solidRules(job.content)}
-              </pre>
+              {job.rich ? (
+                <div className="max-h-96 overflow-auto">
+                  <RichDocumentPreview document={job.rich} />
+                </div>
+              ) : (
+                <pre className="max-h-72 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-[10px] leading-none text-foreground">
+                  {solidRules(job.content)}
+                </pre>
+              )}
             </article>
           ))}
         </div>
