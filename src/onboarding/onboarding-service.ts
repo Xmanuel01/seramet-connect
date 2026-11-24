@@ -268,6 +268,9 @@ const requiredAccountMappings = [
  */
 const defaultImportRunBudgetMs = 20_000;
 
+/** Uber store ids are UUIDs, as shown in Uber's test-store details and Store API. */
+const uberStoreIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 export class OnboardingService {
   constructor(
     private readonly db: D1Database,
@@ -3761,8 +3764,21 @@ export class OnboardingService {
     this.require(permissions.integrationsMappingManage);
     const ticket = await this.openUberTicket(input.ticket);
     await this.assertBranch(ticket.branchId);
-    const store = ticket.stores.find((row) => row.storeId === input.storeId);
-    if (!store) throw validation("Choose one of the stores on the signed-in Uber account");
+    // Uber's sandbox can sign a store's account in without listing the store; its support
+    // then has the integrator activate the store by its id. Uber itself refuses an id the
+    // signed-in account does not manage, so a typed id is accepted only when nothing was listed.
+    const typedStoreId = input.storeId.trim().toLowerCase();
+    const store =
+      ticket.stores.find((row) => row.storeId === input.storeId) ??
+      (ticket.stores.length === 0 && uberStoreIdPattern.test(typedStoreId)
+        ? { storeId: typedStoreId, name: `Uber store ${typedStoreId.slice(0, 8)}` }
+        : undefined);
+    if (!store)
+      throw validation(
+        ticket.stores.length
+          ? "Choose one of the stores on the signed-in Uber account"
+          : "Enter the Uber store ID exactly as Uber gave it (8-4-4-4-12 characters)",
+      );
     // Without a channel the order runtime has nowhere to record Uber orders.
     const orderChannelId = input.orderChannelId ?? ticket.orderChannelId;
     if (!orderChannelId) throw validation("Choose the delivery-app order channel for Uber orders");

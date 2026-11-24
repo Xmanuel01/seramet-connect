@@ -85,11 +85,7 @@ export function UberEatsConnect({ centre }: { centre: ReturnType<typeof useSetup
         setBranchId(result.branchId);
         setEnvironment(result.environment);
         if (result.orderChannelId) setOrderChannelId(result.orderChannelId);
-        setMessage(
-          result.stores.length
-            ? null
-            : { tone: "error", text: "This Uber account has no stores Seramet can manage." },
-        );
+        setMessage(null);
       })
       .catch((reason: unknown) =>
         setMessage({
@@ -150,6 +146,8 @@ export function UberEatsConnect({ centre }: { centre: ReturnType<typeof useSetup
     }
   };
 
+  // Signed in to Uber and waiting for the store choice (or, when Uber listed none, its id).
+  const choosing = Boolean(ticket);
   const branchName = (id?: string) =>
     branches.find((branch) => branch.id === id)?.name ?? id ?? "All branches";
 
@@ -197,11 +195,29 @@ export function UberEatsConnect({ centre }: { centre: ReturnType<typeof useSetup
       </Panel>
       <Panel>
         <PanelHead
-          title={stores.length ? "Choose your Uber store" : "Link an Uber Eats store"}
+          title={choosing ? "Choose your Uber store" : "Link an Uber Eats store"}
           sub={environment === "SANDBOX" ? "Testing: Uber test stores only" : "Live orders"}
         />
         <div className="grid gap-3 p-4">
-          {stores.length ? (
+          {choosing && !stores.length ? (
+            <>
+              <label className={labelClass}>
+                Uber store ID
+                <input
+                  value={storeId}
+                  onChange={(event) => setStoreId(event.target.value.trim())}
+                  className={inputClass}
+                  placeholder="e.g. 1d2b3c4e-5f6a-7890-ab12-c3d4e5f67890"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+              <p className="text-[12px] text-muted-foreground">
+                Uber signed you in but listed no stores for this account. Enter the store ID from
+                Uber&apos;s store details; Uber only accepts a store this account manages.
+              </p>
+            </>
+          ) : choosing ? (
             <label className={labelClass}>
               Uber store
               <select
@@ -277,7 +293,7 @@ export function UberEatsConnect({ centre }: { centre: ReturnType<typeof useSetup
               {message.text}
             </p>
           )}
-          {stores.length ? (
+          {choosing ? (
             <div className="flex flex-wrap gap-2">
               <Btn
                 variant="primary"
