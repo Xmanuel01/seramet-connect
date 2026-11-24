@@ -612,14 +612,18 @@ export async function handleOnboardingApi(
     const storeId = text(input["storeId"]);
     if (!storeId) throw new ServerOperationError("VALIDATION_FAILED", 400, "Choose an Uber store");
     const orderChannelId = text(input["orderChannelId"]);
-    const linked = await service.linkUberEatsStore({
-      ticket: text(input["ticket"]),
-      storeId,
-      ...(orderChannelId ? { orderChannelId } : {}),
-    });
-    // The order runtime reads connections and channels from the cached configuration.
-    await invalidateAuthoritativeConfiguration(env.SERAMET_DB, actor.tenantId);
-    return json({ ok: true, ...linked }, 201);
+    try {
+      const linked = await service.linkUberEatsStore({
+        ticket: text(input["ticket"]),
+        storeId,
+        ...(orderChannelId ? { orderChannelId } : {}),
+      });
+      return json({ ok: true, ...linked }, 201);
+    } finally {
+      // The order runtime reads connections and channels from the cached configuration; a link
+      // that failed part-way may still have changed them.
+      await invalidateAuthoritativeConfiguration(env.SERAMET_DB, actor.tenantId);
+    }
   }
   if (url.pathname === "/api/seramet/setup/providers" && request.method === "GET") {
     return json({ ok: true, providers: service.providerDefinitions() });

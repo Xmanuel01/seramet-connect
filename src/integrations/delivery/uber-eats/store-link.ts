@@ -34,6 +34,8 @@ export const uberCallbackPath = "/api/seramet/integrations/uber-eats/callback";
 /** The browser lands here after Uber sign-in; the sealed ticket travels in the URL fragment. */
 export const uberLinkReturnPath = "/seramet-setup";
 const linkLifetimeMs = 15 * 60_000;
+/** A stalled Uber call fails the setup step with a retryable message instead of hanging. */
+const uberRequestTimeoutMs = 15_000;
 
 /** Connections linked through the platform app read its credentials, never a restaurant secret. */
 export function uberPlatformSecretReference(environment: UberEnvironment) {
@@ -160,6 +162,15 @@ export async function openUberLinkTicket(sealed: string, secret: string, now = D
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
+/** Network failures and timeouts reach the owner as a retryable Uber error. */
+async function callUber(fetcher: FetchLike, url: string, init: RequestInit) {
+  try {
+    return await fetcher(url, { ...init, signal: AbortSignal.timeout(uberRequestTimeoutMs) });
+  } catch {
+    throw new UberLinkError("Uber did not respond in time. Try again in a moment.");
+  }
+}
+
 export async function exchangeUberAuthorizationCode(input: {
   fetch: FetchLike;
   environment: UberEnvironment;
@@ -168,17 +179,21 @@ export async function exchangeUberAuthorizationCode(input: {
   redirectUri: string;
   code: string;
 }) {
-  const response = await input.fetch(`${uberLoginBaseUrls[input.environment]}/oauth/v2/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: input.clientId,
-      client_secret: input.clientSecret,
-      grant_type: "authorization_code",
-      redirect_uri: input.redirectUri,
-      code: input.code,
-    }).toString(),
-  });
+  const response = await callUber(
+    input.fetch,
+    `${uberLoginBaseUrls[input.environment]}/oauth/v2/token`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: input.clientId,
+        client_secret: input.clientSecret,
+        grant_type: "authorization_code",
+        redirect_uri: input.redirectUri,
+        code: input.code,
+      }).toString(),
+    },
+  );
   const body = parseJson<{ access_token?: string; scope?: string }>(await response.text());
   if (!response.ok || !body?.access_token)
     throw new UberLinkError(`Uber sign-in could not be completed (HTTP ${response.status})`);
@@ -190,9 +205,13 @@ export async function listUberStores(input: {
   environment: UberEnvironment;
   accessToken: string;
 }): Promise<UberStoreChoice[]> {
-  const response = await input.fetch(`${uberApiBaseUrls[input.environment]}/v1/eats/stores`, {
-    headers: { Authorization: `Bearer ${input.accessToken}` },
-  });
+  const response = await callUber(
+    input.fetch,
+    `${uberApiBaseUrls[input.environment]}/v1/eats/stores`,
+    {
+      headers: { Authorization: `Bearer ${input.accessToken}` },
+    },
+  );
   const body = parseJson<{ stores?: unknown[] }>(await response.text());
   if (!response.ok)
     throw new UberLinkError(
@@ -228,7 +247,8 @@ export async function provisionUberStore(input: {
   integratorStoreId: string;
   integratorBrandId: string;
 }) {
-  const response = await input.fetch(
+  const response = await callUber(
+    input.fetch,
     `${uberApiBaseUrls[input.environment]}/v1/eats/stores/${encodeURIComponent(input.storeId)}/pos_data`,
     {
       method: "POST",

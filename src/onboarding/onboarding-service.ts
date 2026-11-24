@@ -12,6 +12,7 @@ import {
   uberCallbackPath,
   uberPlatformCredentials,
   uberPlatformSecretReference,
+  UberLinkError,
   type UberEnvironment,
 } from "@/integrations/delivery/uber-eats/store-link";
 import { createIntegrationRepository } from "@/integrations/runtime/integration-repository";
@@ -3762,31 +3763,28 @@ export class OnboardingService {
     await this.assertBranch(ticket.branchId);
     const store = ticket.stores.find((row) => row.storeId === input.storeId);
     if (!store) throw validation("Choose one of the stores on the signed-in Uber account");
+    // Without a channel the order runtime has nowhere to record Uber orders.
     const orderChannelId = input.orderChannelId ?? ticket.orderChannelId;
-    if (orderChannelId) await this.requireMarketplaceChannel(orderChannelId);
+    if (!orderChannelId) throw validation("Choose the delivery-app order channel for Uber orders");
+    await this.requireMarketplaceChannel(orderChannelId);
     const connectionId = stableId("connection", `${uberEatsDefinition.id}:${ticket.branchId}`);
-    const claimed = await this.db
-      .prepare(
-        `SELECT m.tenant_id,m.connection_id FROM provider_mappings m
-         JOIN provider_connections c ON c.tenant_id=m.tenant_id AND c.id=m.connection_id
-         WHERE m.provider_id=? AND m.resource_type='STORE' AND m.status='MAPPED'
-           AND m.external_id=? AND c.environment=? LIMIT 1`,
-      )
-      .bind(uberEatsDefinition.id, store.storeId, ticket.environment)
-      .first<{ tenant_id: string; connection_id: string }>();
-    if (
-      claimed &&
-      (claimed.tenant_id !== this.actor.tenantId || claimed.connection_id !== connectionId)
-    )
+    const owner = await this.uberStoreOwner(store.storeId, ticket.environment);
+    if (owner && (owner.tenant_id !== this.actor.tenantId || owner.connection_id !== connectionId))
       throw validation("This Uber store is already linked to another Seramet location");
-    await provisionUberStore({
-      fetch: (url, init) => fetch(url, init),
-      environment: ticket.environment,
-      accessToken: ticket.merchantAccessToken,
-      storeId: store.storeId,
-      integratorStoreId: ticket.branchId,
-      integratorBrandId: this.actor.tenantId,
-    });
+    try {
+      await provisionUberStore({
+        fetch: (url, init) => fetch(url, init),
+        environment: ticket.environment,
+        accessToken: ticket.merchantAccessToken,
+        storeId: store.storeId,
+        integratorStoreId: ticket.branchId,
+        integratorBrandId: this.actor.tenantId,
+      });
+    } catch (error) {
+      if (error instanceof UberLinkError)
+        throw new ServerOperationError("EXTERNAL_SERVICE_UNAVAILABLE", 502, error.message);
+      throw error;
+    }
     const connection = await this.configureProviderConnection({
       id: connectionId,
       branchId: ticket.branchId,
@@ -3796,18 +3794,11 @@ export class OnboardingService {
       configuration: {
         externalStoreId: store.storeId,
         externalStoreName: store.name,
-        ...(orderChannelId ? { orderChannelId } : {}),
+        orderChannelId,
       },
     });
-    // One Uber store per branch connection: an earlier store (such as the test store before
-    // going live) stops receiving this branch's orders.
-    await this.db
-      .prepare(
-        `UPDATE provider_mappings SET status='DISABLED',updated_at=?
-         WHERE tenant_id=? AND connection_id=? AND resource_type='STORE' AND external_id<>?`,
-      )
-      .bind(now(), this.actor.tenantId, connectionId, store.storeId)
-      .run();
+    // The new store mapping is saved before any older one is retired, so a failure part-way
+    // leaves the branch with a working store rather than none.
     await this.configureExternalMapping({
       connectionId,
       branchId: ticket.branchId,
@@ -3818,8 +3809,70 @@ export class OnboardingService {
       reviewConfirmed: true,
       metadata: { displayName: store.name, linkedThrough: "UBER_SIGN_IN" },
     });
-    if (orderChannelId) await this.attachChannelConnection(orderChannelId, connectionId);
+    // Two restaurants linking the same store at once: the earlier link keeps it.
+    const winner = await this.uberStoreOwner(store.storeId, ticket.environment);
+    if (
+      winner &&
+      (winner.tenant_id !== this.actor.tenantId || winner.connection_id !== connectionId)
+    ) {
+      await this.retireUberStoreMappings(connectionId, () => true);
+      throw validation("This Uber store is already linked to another Seramet location");
+    }
+    // One Uber store per branch: re-read the connection so overlapping links in two tabs both
+    // keep only the store the connection finally points at.
+    const finalStoreId = await this.configuredUberStore(connectionId);
+    await this.retireUberStoreMappings(connectionId, (externalId) => externalId !== finalStoreId);
+    await this.attachChannelConnection(orderChannelId, connectionId);
     return { connection, store };
+  }
+
+  /** The earliest active link of an Uber store, among active restaurants and live connections. */
+  private uberStoreOwner(storeId: string, environment: UberEnvironment) {
+    return this.db
+      .prepare(
+        `SELECT m.tenant_id,m.connection_id FROM provider_mappings m
+         JOIN provider_connections c ON c.tenant_id=m.tenant_id AND c.id=m.connection_id
+         JOIN tenants t ON t.id=m.tenant_id AND t.active=1
+         WHERE m.provider_id=? AND m.resource_type='STORE' AND m.status='MAPPED'
+           AND m.external_id=? AND c.environment=? AND c.status<>'DISABLED'
+         ORDER BY m.created_at, m.tenant_id, m.id LIMIT 1`,
+      )
+      .bind(uberEatsDefinition.id, storeId, environment)
+      .first<{ tenant_id: string; connection_id: string }>();
+  }
+
+  private async configuredUberStore(connectionId: string) {
+    const row = await this.db
+      .prepare("SELECT payload_json FROM provider_connections WHERE tenant_id=? AND id=?")
+      .bind(this.actor.tenantId, connectionId)
+      .first<{ payload_json: string }>();
+    try {
+      const payload = JSON.parse(row?.payload_json ?? "{}") as {
+        configuration?: { externalStoreId?: unknown };
+      };
+      return typeof payload.configuration?.externalStoreId === "string"
+        ? payload.configuration.externalStoreId
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Disables store mappings through the repository so the stored mapping record agrees. */
+  private async retireUberStoreMappings(
+    connectionId: string,
+    shouldRetire: (externalId: string) => boolean,
+  ) {
+    const repository = createIntegrationRepository(this.db);
+    for (const mapping of await repository.listMappings(this.actor.tenantId, connectionId)) {
+      if (
+        mapping.resourceType !== "STORE" ||
+        mapping.status === "DISABLED" ||
+        !shouldRetire(mapping.externalId)
+      )
+        continue;
+      await repository.upsertMapping({ ...mapping, status: "DISABLED", updatedAt: now() });
+    }
   }
 
   private async openUberTicket(ticket: string) {
@@ -3841,27 +3894,32 @@ export class OnboardingService {
     if (!channel) throw validation("Choose an active delivery-app order channel");
   }
 
+  /** Points exactly one order channel at the connection, so Uber orders use the chosen one. */
   private async attachChannelConnection(channelId: string, connectionId: string) {
-    const row = await this.db
-      .prepare("SELECT payload_json FROM order_channels WHERE tenant_id=? AND id=?")
-      .bind(this.actor.tenantId, channelId)
-      .first<{ payload_json: string }>();
-    if (!row) return;
-    let payload: Record<string, unknown> = {};
-    try {
-      payload = JSON.parse(row.payload_json) as Record<string, unknown>;
-    } catch {
-      payload = {};
+    const rows =
+      (
+        await this.db
+          .prepare("SELECT id,payload_json FROM order_channels WHERE tenant_id=?")
+          .bind(this.actor.tenantId)
+          .all<{ id: string; payload_json: string }>()
+      ).results ?? [];
+    for (const row of rows) {
+      let payload: Record<string, unknown> = {};
+      try {
+        payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+      } catch {
+        payload = {};
+      }
+      const pointsHere = payload["deliveryProviderConnectionId"] === connectionId;
+      if (row.id === channelId ? pointsHere : !pointsHere) continue;
+      const next = { ...payload };
+      if (row.id === channelId) next["deliveryProviderConnectionId"] = connectionId;
+      else delete next["deliveryProviderConnectionId"];
+      await this.db
+        .prepare("UPDATE order_channels SET payload_json=? WHERE tenant_id=? AND id=?")
+        .bind(json(next), this.actor.tenantId, row.id)
+        .run();
     }
-    if (payload["deliveryProviderConnectionId"] === connectionId) return;
-    await this.db
-      .prepare("UPDATE order_channels SET payload_json=? WHERE tenant_id=? AND id=?")
-      .bind(
-        json({ ...payload, deliveryProviderConnectionId: connectionId }),
-        this.actor.tenantId,
-        channelId,
-      )
-      .run();
   }
 
   providerDefinitions() {

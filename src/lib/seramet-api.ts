@@ -438,7 +438,8 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
 
     // Uber sends every store's events to the one webhook URL of Seramet's Uber app.
     if (url.pathname === uberWebhookPath && request.method === "POST") {
-      await consumeRateLimit(env, "webhook:UBER_EATS:platform", sensitiveRateLimits.webhook);
+      // Rate-limited per Uber store after the signature check, inside the handler, so unsigned
+      // traffic cannot use up the quota of real deliveries.
       return await receiveUberPlatformWebhook(request, env);
     }
     if (url.pathname === uberCallbackPath && request.method === "GET") {
@@ -990,10 +991,8 @@ async function receiveIntegrationWebhook(
  * event to the one restaurant connection that maps the Uber store (`meta.user_id`). Events for a
  * store no restaurant has linked are acknowledged and dropped so Uber does not keep retrying.
  */
-async function receiveUberPlatformWebhook(request: Request, env: SerametEnv) {
-  const contentLength = Number(request.headers.get("content-length") ?? 0);
-  if (contentLength > 1_048_576) throw new SerametHttpError(413, "Webhook body is too large");
-  const rawBody = new Uint8Array(await request.arrayBuffer());
+export async function receiveUberPlatformWebhook(request: Request, env: SerametEnv) {
+  const rawBody = await readBoundedBody(request, 1_048_576);
   const environment = uberDeliveryEnvironment(request.headers.get("x-environment"));
   const credentials = uberPlatformCredentials(env, environment);
   if (!credentials) throw new SerametHttpError(503, "Uber Eats is not configured on this server");
@@ -1010,6 +1009,7 @@ async function receiveUberPlatformWebhook(request: Request, env: SerametEnv) {
     throw new SerametHttpError(400, "Webhook body is not JSON");
   }
   if (!storeId || !env.SERAMET_DB) return new Response(null, { status: 200 });
+  await consumeRateLimit(env, `webhook:UBER_EATS:${storeId}`, sensitiveRateLimits.webhook);
   const owners =
     (
       await env.SERAMET_DB.prepare(
@@ -1039,6 +1039,33 @@ async function receiveUberPlatformWebhook(request: Request, env: SerametEnv) {
     uberEatsDefinition.code,
     owners[0]!.connection_id,
   );
+}
+
+/** Reads at most `limit` bytes, whatever Content-Length claims, and refuses anything larger. */
+async function readBoundedBody(request: Request, limit: number) {
+  if (Number(request.headers.get("content-length") ?? 0) > limit)
+    throw new SerametHttpError(413, "Webhook body is too large");
+  if (!request.body) return new Uint8Array();
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      throw new SerametHttpError(413, "Webhook body is too large");
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
 }
 
 /**
