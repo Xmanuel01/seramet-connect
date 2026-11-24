@@ -197,6 +197,15 @@ export async function exchangeUberAuthorizationCode(input: {
   const body = parseJson<{ access_token?: string; scope?: string }>(await response.text());
   if (!response.ok || !body?.access_token)
     throw new UberLinkError(`Uber sign-in could not be completed (HTTP ${response.status})`);
+  const scopes = body.scope?.split(/\s+/).filter(Boolean) ?? [];
+  // Scope names only: shows whether Uber actually granted provisioning to this sign-in.
+  console.info(
+    JSON.stringify({ event: "uber_sign_in_token", environment: input.environment, scopes }),
+  );
+  if (body.scope !== undefined && !scopes.includes(uberProvisioningScope))
+    throw new UberLinkError(
+      `Uber did not grant ${uberProvisioningScope} to Seramet for this sign-in; ask Uber to enable it for the app`,
+    );
   return body.access_token;
 }
 

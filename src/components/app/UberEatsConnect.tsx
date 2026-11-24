@@ -17,6 +17,8 @@ const signInErrors: Record<string, string> = {
   declined: "Uber sign-in was cancelled.",
   config: "Uber Eats is not switched on for this server yet.",
   uber: "Uber did not finish the sign-in. Try again in a moment.",
+  scope:
+    "Uber did not give Seramet permission to manage stores (eats.pos_provisioning). Uber has to enable it for the Seramet app.",
 };
 
 /**

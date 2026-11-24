@@ -2203,6 +2203,35 @@ export class IntegrationRuntime {
       throw new IntegrationValidationError("Marketplace connection is disabled or not configured");
   }
 
+  /**
+   * The marketplace confirmed or withdrew Seramet as the store's integration (Uber's
+   * store.provisioned / store.deprovisioned). Withdrawal retires the store mapping so the branch
+   * shows as unlinked instead of silently waiting for orders that will no longer come.
+   */
+  private async processStoreLifecycle(
+    event: IntegrationEvent,
+    parsed: ParsedProviderEvent,
+    connection: IntegrationConnection,
+  ) {
+    const storeId = parsed.externalStoreId ?? parsed.externalResourceId;
+    const mapping = (
+      await this.dependencies.repository.listMappings(event.tenantId, connection.id)
+    ).find((row) => row.resourceType === "STORE" && row.externalId === storeId);
+    if (!mapping) return { ignored: true, reason: "store not mapped" };
+    const connected = parsed.eventType === "STORE_CONNECTED";
+    const at = parsed.occurredAt ?? new Date().toISOString();
+    await this.dependencies.repository.upsertMapping({
+      ...mapping,
+      ...(connected ? {} : { status: "DISABLED" as const }),
+      metadata: {
+        ...mapping.metadata,
+        providerLink: { state: connected ? "PROVISIONED" : "DEPROVISIONED", at, eventId: event.id },
+      },
+      updatedAt: new Date().toISOString(),
+    });
+    return { store: connected ? "PROVISIONED" : "DEPROVISIONED", mappingId: mapping.id };
+  }
+
   private async processEvent(
     event: IntegrationEvent,
     parsed: ParsedProviderEvent,
@@ -2230,6 +2259,11 @@ export class IntegrationRuntime {
       result = await this.processIncomingOrderCancellation(event, parsed, connection);
     } else if (parsed.eventType === "PAYMENT_CONFIRMED" || parsed.eventType === "PAYMENT_FAILED") {
       result = await this.processPaymentEvent(event, parsed, connection, adapter, credentials);
+    } else if (
+      parsed.eventType === "STORE_CONNECTED" ||
+      parsed.eventType === "STORE_DISCONNECTED"
+    ) {
+      result = await this.processStoreLifecycle(event, parsed, connection);
     }
     await this.events.updateStatus(event.tenantId, event.id, {
       status: "PROCESSED",

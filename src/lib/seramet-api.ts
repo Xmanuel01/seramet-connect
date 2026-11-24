@@ -1113,7 +1113,8 @@ async function completeUberSignIn(url: URL, env: SerametEnv) {
         message: error instanceof Error ? error.message : "unknown",
       }),
     );
-    return back("uberError=uber");
+    const missingScope = error instanceof Error && error.message.includes("eats.pos_provisioning");
+    return back(missingScope ? "uberError=scope" : "uberError=uber");
   }
 }
 
