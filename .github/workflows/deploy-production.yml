@@ -1,0 +1,132 @@
+name: Deploy production
+
+# Owner-dispatched production release of an already merged, owner-approved candidate.
+# Order is fixed: release gate -> build/validate -> resource check -> database security
+# check -> migrations (one transaction) -> security recheck -> Worker deploy -> health.
+# Nothing runs automatically from a push, and every gate fails closed.
+on:
+  workflow_dispatch:
+    inputs:
+      release_pr:
+        description: "Merged main-targeted PR whose owner-approved head is this main commit"
+        required: true
+        type: string
+
+concurrency:
+  group: seramet-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: read
+  actions: read
+
+jobs:
+  deploy:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.actor == github.repository_owner && github.triggering_actor == github.repository_owner
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    env:
+      SERAMET_ENVIRONMENT: production
+      # Pinned production identities; scripts/scanner-deployment-resources.mjs rejects drift.
+      SERAMET_CLOUDFLARE_WORKER_NAME: seramet-connect
+      SERAMET_CLOUDFLARE_HYPERDRIVE_ID: 4538af733065451c94d47beb2028390e
+      SERAMET_CLOUDFLARE_R2_BUCKET: seramet-production-objects
+      SERAMET_CLOUDFLARE_QUEUE: seramet-production-live-work
+      SERAMET_CLOUDFLARE_DLQ: seramet-production-live-dlq
+      SERAMET_CLOUDFLARE_SCAN_QUEUE: seramet-production-file-scan
+      SERAMET_SUPABASE_URL: https://qnhqylslyhxjcksuhgyq.supabase.co
+      SERAMET_PUBLIC_ORIGIN: https://pos.seramet.co.ke
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Require merged owner-approved candidate, approved SHA and fresh recovery drill
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PR: ${{ inputs.release_pr }}
+          SERAMET_PRODUCTION_APPROVED_SHA: ${{ vars.SERAMET_PRODUCTION_APPROVED_SHA }}
+          SERAMET_DATA_API_EXPOSURE_CLEARED: ${{ vars.SERAMET_DATA_API_EXPOSURE_CLEARED }}
+        run: node scripts/verify-production-release-gate.mjs
+      - run: npm ci
+      - run: node scripts/audit-dependencies.mjs
+      - run: npm run validate
+
+      - name: Confirm existing production Cloudflare resources (read only)
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          api() {
+            curl --fail-with-body --silent --show-error \
+              "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/$1" \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -o "$2"
+          }
+          api "hyperdrive/configs/${SERAMET_CLOUDFLARE_HYPERDRIVE_ID}" /tmp/hyperdrive.json
+          api "r2/buckets/${SERAMET_CLOUDFLARE_R2_BUCKET}" /tmp/bucket.json
+          api "queues?per_page=100" /tmp/queues.json
+          node <<'NODE'
+          const fs = require("fs");
+          const read = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+          const missing = [];
+          if (!read("/tmp/hyperdrive.json").success) missing.push("Hyperdrive");
+          if (!read("/tmp/bucket.json").success) missing.push("R2 bucket");
+          const payload = read("/tmp/queues.json").result;
+          const rows = Array.isArray(payload) ? payload : (payload?.queues ?? []);
+          const names = new Set(rows.map((row) => row.queue_name ?? row.name));
+          for (const name of [
+            process.env.SERAMET_CLOUDFLARE_QUEUE,
+            process.env.SERAMET_CLOUDFLARE_DLQ,
+            process.env.SERAMET_CLOUDFLARE_SCAN_QUEUE,
+          ])
+            if (!names.has(name)) missing.push(`queue ${name}`);
+          if (missing.length)
+            throw new Error(`Production resources are not provisioned: ${missing.join(", ")}`);
+          console.log("Production Hyperdrive, R2 bucket and queues exist.");
+          NODE
+
+      - name: Verify production database identity and security before migrations
+        env:
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: node scripts/assert-production-api-posture.mjs pre-migration
+
+      - name: Apply PostgreSQL migrations (single transaction)
+        env:
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: npm run migrate:postgres
+
+      - name: Recheck production database security after migrations
+        env:
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: node scripts/assert-production-api-posture.mjs post-migration
+
+      - name: Generate production Worker configuration
+        env:
+          SERAMET_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SERAMET_SUPABASE_PUBLISHABLE_KEY }}
+          SERAMET_APP_VERSION: ${{ github.ref_name }}
+          SERAMET_BUILD_ID: ${{ github.sha }}
+        run: node scripts/render-cloudflare-config.mjs production
+
+      - name: Deploy production Worker
+        run: npx --yes wrangler@4.149.0 deploy --config .seramet/wrangler.generated.json
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Verify liveness
+        run: curl --fail-with-body --retry 8 --retry-delay 5 "${SERAMET_PUBLIC_ORIGIN}/api/seramet/health/live"
+
+      - name: Verify production environment, schema version and deployed build
+        env:
+          SERAMET_EXPECTED_BUILD_ID: ${{ github.sha }}
+        run: node scripts/verify-production-health.mjs
