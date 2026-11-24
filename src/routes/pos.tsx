@@ -427,10 +427,11 @@ function POS() {
       const baseline = orderBaseline.current;
       if (!baseline)
         throw new Error("Wait for the selected order to finish loading before saving.");
+      // A draft older than the saved order pins the revision it was based on, so the save is
+      // refused. An up-to-date draft leaves it unpinned: a change elsewhere in the restaurant
+      // then doesn't block it (the engine resends when this order is unchanged).
       expectedRevision =
-        (await digestOrder(activeOrder)) === baseline.digest
-          ? transactionRevision
-          : baseline.revision;
+        (await digestOrder(activeOrder)) === baseline.digest ? undefined : baseline.revision;
     }
     const result = await mutateBackendTransaction(
       action,

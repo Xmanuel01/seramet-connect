@@ -400,6 +400,26 @@ test("full day: sign-up, onboarding, setup, trading and business-day close", asy
 
   await test.step("6c. Cashier takes dine-in and delivery orders (screens and printer)", async () => {
     await staffSignIn(page, "cashier");
+    // Another terminal changes something unrelated while the dine-in order is on its way: the
+    // kitchen starts the takeaway. The till's revision is then stale; the server refuses the
+    // save once and the till sends it again, because nothing about this order changed.
+    let heldBack = false;
+    await page.route("**/api/seramet/transactions/mutate", async (route) => {
+      if (!heldBack) {
+        heldBack = true;
+        await kitchen.reload();
+        const takeaway = kitchen.getByRole("article").filter({ hasText: orders.takeaway! }).first();
+        await takeaway.getByRole("button", { name: "Start", exact: true }).click();
+        await expect(takeaway.getByRole("button", { name: "Start", exact: true })).toHaveCount(0);
+      }
+      await route.continue();
+    });
+    const statuses: number[] = [];
+    const watch = (response: import("@playwright/test").Response) => {
+      if (new URL(response.url()).pathname === "/api/seramet/transactions/mutate")
+        statuses.push(response.status());
+    };
+    page.on("response", watch);
     orders.dineIn = await placeOrder(
       "Dine-in",
       [
@@ -412,6 +432,11 @@ test("full day: sign-up, onboarding, setup, trading and business-day close", asy
         await picker.getByRole("button", { name: /^Table T1 / }).click();
       },
     );
+    page.off("response", watch);
+    await page.unroute("**/api/seramet/transactions/mutate");
+    expect(heldBack).toBe(true);
+    expect(statuses.slice(0, 2)).toEqual([409, 200]);
+    await expect(page.getByText(/changed on another terminal/)).toHaveCount(0);
     orders.delivery = await placeOrder("Own delivery", [["Nyama Choma", 2]], async (pos) => {
       await pos.getByLabel("Customer name", { exact: true }).fill("Wanjiku Njeri");
       await pos
@@ -428,6 +453,8 @@ test("full day: sign-up, onboarding, setup, trading and business-day close", asy
       const ticket = kitchen.getByRole("article").filter({ hasText: id }).first();
       await expect(ticket).toBeVisible();
       for (const action of ["Start", "Ready", "Served"]) {
+        // The takeaway was already started while the dine-in order was placed (step 6c).
+        if (action === "Start" && id === orders.takeaway) continue;
         await ticket.getByRole("button", { name: action, exact: true }).click();
         if (action !== "Served")
           await expect(ticket.getByRole("button", { name: action, exact: true })).toHaveCount(0);

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { commandTargetsUnchanged } from "@/lib/command-rebase";
 import { changesTransactions } from "@/lib/realtime-relevance";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { closingMutationActions } from "@/payments/daily-closing";
@@ -530,18 +531,46 @@ export function useTransactionEngine() {
       let serverConflict = false;
       const requestScope = scopeKey;
       try {
-        const response = await authenticatedFetch("/api/seramet/transactions/mutate", {
-          method: "POST",
-          headers: { ...headers, "Idempotency-Key": idempotencyKey },
-          body: JSON.stringify({
-            action,
-            payload,
-            idempotencyKey,
-            expectedRevision: expectedRevision ?? revisionRef.current,
-          }),
-          signal: AbortSignal.timeout(20_000),
-        });
+        const send = (revisionToCheck: number) =>
+          authenticatedFetch("/api/seramet/transactions/mutate", {
+            method: "POST",
+            headers: { ...headers, "Idempotency-Key": idempotencyKey },
+            body: JSON.stringify({
+              action,
+              payload,
+              idempotencyKey,
+              expectedRevision: revisionToCheck,
+            }),
+            signal: AbortSignal.timeout(20_000),
+          });
+        let response = await send(expectedRevision ?? revisionRef.current);
         receivedServerResponse = true;
+        // Revisions are restaurant-wide, so any change elsewhere (another table, the kitchen,
+        // another till) refuses this command. When nothing it names changed, send it once
+        // more on the new revision, with the same idempotency key so it can only apply once.
+        // Not for a caller that pinned its own revision, nor for closing.
+        if (
+          response.status === 409 &&
+          expectedRevision === undefined &&
+          !closingMutationActions.has(action)
+        ) {
+          const refused = (await response
+            .clone()
+            .json()
+            .catch(() => ({}))) as { current?: { revision?: number; state?: TransactionState } };
+          const latest = refused.current;
+          if (
+            latest?.state &&
+            latest.revision !== undefined &&
+            scopeRef.current === requestScope &&
+            commandTargetsUnchanged(state, latest.state, payload)
+          ) {
+            setState(latest.state);
+            setRevision(latest.revision);
+            revisionRef.current = latest.revision;
+            response = await send(latest.revision);
+          }
+        }
         if (closingMutationActions.has(action) && scopeRef.current !== mutationScope) {
           const result = (await response.json()) as {
             state: TransactionState;
