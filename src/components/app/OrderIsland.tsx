@@ -10,6 +10,8 @@ export interface OrderIslandNotice {
   id: number;
   kind: OrderIslandKind;
   detail?: string;
+  /** Link the detail to Printers & Devices (printer and routing problems only). */
+  linkToPrinters?: boolean;
 }
 
 const TITLES: Record<OrderIslandKind, string> = {
@@ -54,7 +56,7 @@ export function OrderIsland({
   }, [notice, onDismiss]);
 
   if (!notice) return null;
-  const { kind, detail } = notice;
+  const { kind, detail, linkToPrinters } = notice;
   const Icon = kind === "placed" ? Check : kind === "saved" ? Printer : X;
 
   return (
@@ -81,19 +83,21 @@ export function OrderIsland({
         </span>
         <span
           className={cn(
-            "min-w-0 whitespace-nowrap transition-opacity duration-300",
+            "min-w-0 transition-opacity duration-300",
             expanded ? "opacity-100 delay-150" : "opacity-0",
           )}
         >
-          <span className="block text-[14px] font-semibold leading-tight">{TITLES[kind]}</span>
+          <span className="block whitespace-nowrap text-[14px] font-semibold leading-tight">
+            {TITLES[kind]}
+          </span>
           {detail ? (
-            <span className="block max-w-[300px] truncate text-[11.5px] leading-tight text-white/65">
-              {kind === "placed" ? (
-                detail
-              ) : (
+            <span className="line-clamp-2 block max-w-[320px] whitespace-normal text-[11.5px] leading-tight text-white/65">
+              {linkToPrinters ? (
                 <Link to="/seramet-printers" className="underline decoration-white/40">
                   {detail}
                 </Link>
+              ) : (
+                detail
               )}
             </span>
           ) : null}

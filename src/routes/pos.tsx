@@ -223,10 +223,15 @@ function POS() {
   const kitchenOrderAcceptedRef = useRef(false);
   const [orderIsland, setOrderIsland] = useState<OrderIslandNotice | null>(null);
   const dismissOrderIsland = useCallback(() => setOrderIsland(null), []);
-  const showOrderIsland = (kind: OrderIslandNotice["kind"], detail?: string) =>
+  const showOrderIsland = (
+    kind: OrderIslandNotice["kind"],
+    detail?: string,
+    linkToPrinters = kind !== "placed",
+  ) =>
     setOrderIsland((current) => ({
       id: (current?.id ?? 0) + 1,
       kind,
+      linkToPrinters,
       ...(detail ? { detail } : {}),
     }));
   // Bridge callbacks may complete out of order. Persist their acknowledgements
@@ -1341,7 +1346,7 @@ function POS() {
       if (!items.length) return;
       if (selectedChannel?.requiresTable && !orderTable) {
         setTablePickerOpen(true);
-        showOrderIsland("failed", "Choose a table first");
+        showOrderIsland("failed", "Choose a table first", false);
         return;
       }
       try {
@@ -1364,7 +1369,8 @@ function POS() {
         if (kitchenOrderAcceptedRef.current) {
           showOrderIsland("saved", "In Orders · check the ticket in Printers");
         } else {
-          showOrderIsland("failed", kitchenFailureReason(error));
+          const reason = kitchenFailureReason(error);
+          showOrderIsland("failed", reason.text, reason.printer);
         }
       }
     });
@@ -2424,13 +2430,21 @@ const IDLE_PRINT_NOTICE = "Print routing is running in the background.";
 
 const NO_PRINT_ROUTE = "Kitchen dispatch requires a configured printer/KDS route";
 
-/** A few words for the island; the full reason stays in Printers & Devices. */
+/**
+ * Printer and routing problems become a few words that link to Printers & Devices.
+ * Anything else (a missing delivery address, a required customer, a server rejection)
+ * is shown as the cashier's own message, so they know what to fix.
+ */
 function kitchenFailureReason(error: unknown) {
   const message = error instanceof Error ? error.message : "";
-  if (message.startsWith(NO_PRINT_ROUTE)) return "No printer set up for this till";
-  if (message.startsWith("Kitchen routing is unavailable")) return "No kitchen route set up";
-  if (message.startsWith("Choose a table")) return "Choose a table first";
-  return "Tap to check Printers";
+  if (message.startsWith(NO_PRINT_ROUTE))
+    return { text: "No printer set up for this till", printer: true };
+  if (message.startsWith("Kitchen routing is unavailable"))
+    return { text: "No kitchen route set up", printer: true };
+  return {
+    text: cashierErrorMessage(error, "The kitchen order could not be sent."),
+    printer: false,
+  };
 }
 
 function cashierErrorMessage(error: unknown, fallback: string) {
