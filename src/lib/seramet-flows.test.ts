@@ -355,7 +355,7 @@ describe("branch capabilities and module visibility", () => {
     ).toBe(true);
   });
 
-  it("exposes implemented brief routes while excluding unimplemented pilot registers", () => {
+  it("exposes implemented brief routes and no placeholder registers", () => {
     const westlands = getVisibleNavGroups(
       "General Manager",
       "Westlands",
@@ -369,10 +369,13 @@ describe("branch capabilities and module visibility", () => {
         roleCanAccessPath("General Manager", path, "Westlands", undefined, DEMO_TENANT_ID),
       ).toBe(true);
     });
+    // The never-built decisions register is gone from the menu; its old address leads to
+    // Approvals, which a General Manager can open.
     expect(westlands).not.toContain("/decisions");
+    expect(westlands).toContain("/approvals");
     expect(
       roleCanAccessPath("General Manager", "/decisions", "Westlands", undefined, DEMO_TENANT_ID),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("keeps the sensitive dashboard hidden from frontline operational roles by default", () => {

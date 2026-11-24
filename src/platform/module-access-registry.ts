@@ -524,7 +524,7 @@ export const moduleAccessRegistry: readonly ModuleAccessDefinition[] = [
   },
   {
     key: "attendance",
-    label: "Employee Attendance",
+    label: "Clock In/Out",
     navigationPermission: anyOf(permissions.attendanceUse, permissions.staffManage),
     routePermission: anyOf(permissions.attendanceUse, permissions.staffManage),
     actionPermissions: actions(
@@ -538,7 +538,7 @@ export const moduleAccessRegistry: readonly ModuleAccessDefinition[] = [
   },
   {
     key: "time-tracking",
-    label: "Attendance",
+    label: "Team Timecards",
     navigationPermission: anyOf(permissions.staffView, permissions.staffManage),
     routePermission: anyOf(permissions.staffView, permissions.staffManage),
     actionPermissions: actions(

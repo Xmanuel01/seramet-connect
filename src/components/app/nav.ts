@@ -49,7 +49,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { AppRole } from "@/lib/app-context";
-import { pilotUnavailable } from "@/lib/pilot-unavailable";
 import { LOCAL_PILOT_TENANT_ID } from "@/platform/pilot-defaults";
 import { permissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
@@ -126,12 +125,6 @@ export const navGroups: NavGroup[] = [
         permission: permissions.qrManage,
       },
       {
-        label: "Returns",
-        to: "/returns",
-        icon: RotateCcw,
-        permission: permissions.paymentsRefundRequest,
-      },
-      {
         label: "Refunds",
         to: "/refunds",
         icon: RotateCcw,
@@ -145,7 +138,7 @@ export const navGroups: NavGroup[] = [
     group: "Kitchen",
     permission: permissions.kitchenView,
     // Kitchen work only, in the order a shift uses it. Costs live in Finance, menu import in
-    // System. Stock requests is also in Procurement, for staff who can request but not buy.
+    // System. Stock Requests is listed here and in Procurement; each person sees it once.
     items: [
       { label: "Kitchen Display", to: "/kitchen", icon: ChefHat },
       { label: "Bar", to: "/bar", icon: Martini },
@@ -225,11 +218,10 @@ export const navGroups: NavGroup[] = [
     items: [
       { label: "Overview", to: "/people", icon: IdCard },
       { label: "Employees", to: "/employees", icon: UserRound },
+      // Your own clock-in, and the team's shifts, timecards and hours.
       { label: "Clock In/Out", to: "/attendance", icon: ClipboardCheck },
-      { label: "Attendance", to: "/schedule", icon: CalendarDays },
+      { label: "Team Timecards", to: "/schedule", icon: CalendarDays },
       { label: "Payroll", to: "/payroll", icon: Wallet, permission: permissions.payrollManage },
-      { label: "Leave", to: "/leave", icon: CalendarX },
-      { label: "Recruitment", to: "/recruitment", icon: UserPlus },
     ],
   },
   {
@@ -290,12 +282,6 @@ export const navGroups: NavGroup[] = [
         permission: permissions.enterpriseView,
       },
       {
-        label: "Pending Decisions",
-        to: "/decisions",
-        icon: Gauge,
-        permission: permissions.dashboardView,
-      },
-      {
         label: "Branches",
         to: "/branches",
         icon: Store,
@@ -306,19 +292,6 @@ export const navGroups: NavGroup[] = [
         to: "/approvals",
         icon: Gauge,
         permission: permissions.procurementApprove,
-      },
-      { label: "Tasks", to: "/tasks", icon: ListTodo, permission: permissions.ordersUpdate },
-      {
-        label: "Audit Trail",
-        to: "/audit-trail",
-        icon: ClipboardList,
-        permission: permissions.auditView,
-      },
-      {
-        label: "Notifications",
-        to: "/notifications",
-        icon: Bell,
-        permission: permissions.auditView,
       },
     ],
   },
@@ -404,21 +377,38 @@ export function getVisibleNavGroups(
       entitlements: [],
       entitlementsEnforced: false,
     });
-  return navGroups
-    .map((group) => ({
-      ...group,
-      items: group.items.filter((item) => {
-        if (item.to && pilotUnavailable[item.to]) return false;
-        const registered = item.to ? moduleDefinitionsForPath(item.to).length > 0 : false;
-        if (item.to && registered && !canNavigateToPath(access, item.to)) return false;
-        if (!registered) {
-          const permission = item.permission ?? group.permission;
-          if (permission && !allowed.has(permission)) return false;
-        }
-        return true;
-      }),
-    }))
-    .filter((group) => group.items.length > 0);
+  const visible = navGroups.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => {
+      const registered = item.to ? moduleDefinitionsForPath(item.to).length > 0 : false;
+      if (item.to && registered && !canNavigateToPath(access, item.to)) return false;
+      if (!registered) {
+        const permission = item.permission ?? group.permission;
+        if (permission && !allowed.has(permission)) return false;
+      }
+      return true;
+    }),
+  }));
+  return showEachPageOnce(visible).filter((group) => group.items.length > 0);
+}
+
+/**
+ * A page listed in two sections (Stock Requests: Kitchen and Procurement) is shown once, in
+ * the section holding more of the person's other pages: a head chef finds it under Kitchen,
+ * a buyer under Procurement.
+ */
+function showEachPageOnce<G extends { items: NavItem[] }>(groups: G[]): G[] {
+  const home = new Map<string, G>();
+  for (const group of groups)
+    for (const item of group.items) {
+      if (!item.to) continue;
+      const current = home.get(item.to);
+      if (!current || group.items.length > current.items.length) home.set(item.to, group);
+    }
+  return groups.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => !item.to || home.get(item.to) === group),
+  }));
 }
 
 /**
@@ -432,6 +422,14 @@ export const movedPaths: Record<string, string> = {
   "/breakages": "/stock-losses",
   "/adjustments": "/stock-losses",
   "/supplier-performance": "/suppliers",
+  // Placeholder pages that were never built; their addresses go to the nearest real page.
+  "/decisions": "/approvals",
+  "/tasks": "/approvals",
+  "/notifications": "/approvals",
+  "/audit-trail": "/enterprise",
+  "/leave": "/people",
+  "/recruitment": "/people",
+  "/returns": "/payment-control",
 };
 
 export function roleCanAccessPath(

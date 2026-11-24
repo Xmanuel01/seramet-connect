@@ -19,7 +19,6 @@ import {
   type PermissionRequirement,
 } from "@/platform/module-access-registry";
 import { permissions as platformPermissions } from "@/platform/permissions";
-import { pilotUnavailable } from "@/lib/pilot-unavailable";
 import { settingsGroups } from "@/platform/settings-navigation";
 import type { OrderChannelType, PaymentMethodCategory } from "@/platform/types";
 
@@ -116,9 +115,7 @@ function Settings() {
     .map((group) => ({
       ...group,
       items: group.items.filter(
-        (item) =>
-          item.kind === "inline" ||
-          (!pilotUnavailable[item.to] && canNavigateToPath(moduleAccess, item.to)),
+        (item) => item.kind === "inline" || canNavigateToPath(moduleAccess, item.to),
       ),
     }))
     .filter((group) => group.items.length > 0);
@@ -451,21 +448,7 @@ function Settings() {
   );
 
   return (
-    <AppShell
-      title="Settings"
-      subtitle={tenant?.tradingName ?? undefined}
-      actions={
-        !pilotUnavailable["/audit-trail"] && canNavigateToPath(moduleAccess, "/audit-trail") ? (
-          <Link
-            to="/audit-trail"
-            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border bg-card px-3 text-[13px] font-semibold transition-colors hover:bg-secondary"
-          >
-            Audit log
-            <ArrowRight className="h-4 w-4" aria-hidden="true" />
-          </Link>
-        ) : undefined
-      }
-    >
+    <AppShell title="Settings" subtitle={tenant?.tradingName ?? undefined}>
       <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
         <Panel className="p-2">
           <nav className="space-y-1">
