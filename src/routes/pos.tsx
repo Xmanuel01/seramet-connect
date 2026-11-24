@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { deliverySettings, type DeliveryCharge } from "@/delivery/delivery-charge";
 import { DeliveryChargeFields } from "@/delivery/DeliveryChargeFields";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   CheckCircle2,
   Clock,
@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { OrderIsland, type OrderIslandNotice } from "@/components/app/OrderIsland";
+import { PanelResizeHandle } from "@/components/app/PanelResizeHandle";
+import { usePanelWidth } from "@/hooks/use-panel-width";
 import { PosCustomerPicker } from "@/components/app/PosCustomerPicker";
 import { orderChannelDispatchError } from "@/orders/order-channel-service";
 import { UpcomingScheduledOrders } from "@/components/app/UpcomingScheduledOrders";
@@ -218,6 +220,9 @@ function POS() {
   );
   const hydratedOrderIdRef = useRef<string | null>(null);
   const orderActionRef = useRef(false);
+  // Desktop panel widths: the category rail and the order panel can be dragged wider or narrower.
+  const categoryPanel = usePanelWidth("seramet.pos.categoryWidth", 132, 96, 320);
+  const orderPanel = usePanelWidth("seramet.pos.orderWidth", 360, 300, 640);
   // True once the server has accepted the kitchen order, so a later print failure is
   // reported as "saved, not printed" rather than "not placed" (which invites a duplicate).
   const kitchenOrderAcceptedRef = useRef(false);
@@ -1564,7 +1569,29 @@ function POS() {
             )}
           </div>
         )}
-        <div className="grid gap-0 lg:min-h-0 lg:flex-1 lg:grid-cols-[132px_minmax(0,1fr)_360px]">
+        <div
+          className="relative grid gap-0 lg:min-h-0 lg:flex-1 lg:grid-cols-[var(--pos-category-width)_minmax(0,1fr)_var(--pos-order-width)]"
+          style={
+            {
+              "--pos-category-width": `${categoryPanel.width}px`,
+              "--pos-order-width": `${orderPanel.width}px`,
+            } as CSSProperties
+          }
+        >
+          <PanelResizeHandle
+            label="Resize categories"
+            side="left"
+            panel={categoryPanel}
+            className="hidden lg:block"
+            style={{ left: "var(--pos-category-width)" }}
+          />
+          <PanelResizeHandle
+            label="Resize order panel"
+            side="right"
+            panel={orderPanel}
+            className="hidden lg:block"
+            style={{ left: "calc(100% - var(--pos-order-width))" }}
+          />
           <nav className="flex gap-1.5 overflow-x-auto border-b border-border bg-card p-2 lg:h-full lg:flex-col lg:overflow-y-auto lg:border-b-0 lg:border-r">
             {posCategories.map((c) => (
               <button
