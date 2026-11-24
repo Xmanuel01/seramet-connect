@@ -193,6 +193,14 @@ describe("Uber Eats store link", () => {
         accessToken: "merchant",
       }),
     ).resolves.toEqual([]);
+    // An empty `stores` list must not hide stores Uber listed under `data`.
+    await expect(
+      listUberStores({
+        fetch: reply({ stores: [], data: [{ id: "store-3", name: "Third" }] }),
+        environment: "SANDBOX",
+        accessToken: "merchant",
+      }),
+    ).resolves.toEqual([{ storeId: "store-3", name: "Third" }]);
   });
 
   it("reports Uber's refusal to activate a store", async () => {

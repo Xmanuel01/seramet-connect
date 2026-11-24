@@ -2216,7 +2216,10 @@ export class IntegrationRuntime {
     const storeId = parsed.externalStoreId ?? parsed.externalResourceId;
     const mapping = (
       await this.dependencies.repository.listMappings(event.tenantId, connection.id)
-    ).find((row) => row.resourceType === "STORE" && row.externalId === storeId);
+    ).find(
+      (row) =>
+        row.resourceType === "STORE" && row.externalId.toLowerCase() === storeId?.toLowerCase(),
+    );
     if (!mapping) return { ignored: true, reason: "store not mapped" };
     const connected = parsed.eventType === "STORE_CONNECTED";
     const at = parsed.occurredAt ?? new Date().toISOString();

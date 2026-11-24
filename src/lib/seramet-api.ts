@@ -1017,7 +1017,7 @@ export async function receiveUberPlatformWebhook(request: Request, env: SerametE
          JOIN provider_connections c ON c.tenant_id=m.tenant_id AND c.id=m.connection_id
          JOIN tenants t ON t.id=m.tenant_id AND t.active=1
          WHERE m.provider_id=? AND m.resource_type='STORE' AND m.status='MAPPED'
-           AND m.external_id=? AND c.environment=? AND c.status<>'DISABLED'
+           AND LOWER(m.external_id)=LOWER(?) AND c.environment=? AND c.status<>'DISABLED'
          LIMIT 2`,
       )
         .bind(uberEatsDefinition.id, storeId, environment)

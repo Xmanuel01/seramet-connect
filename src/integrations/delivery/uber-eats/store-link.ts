@@ -227,7 +227,9 @@ export async function listUberStores(input: {
       `Uber did not list the stores for this account (HTTP ${response.status})`,
     );
   // The Store API has answered as `stores[].store_id` and as `data[].id`; accept either.
-  const rows = [body?.["stores"], body?.["data"], body?.["results"]].find(Array.isArray) ?? [];
+  const lists = [body?.["stores"], body?.["data"], body?.["results"]].filter(Array.isArray);
+  // An empty list under one key must not hide stores listed under another.
+  const rows: unknown[] = lists.find((list) => list.length > 0) ?? [];
   const stores = (rows as unknown[]).flatMap((entry) => {
     const store = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
     const storeId = [store["store_id"], store["id"]].find(

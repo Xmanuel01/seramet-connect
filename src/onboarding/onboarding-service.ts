@@ -268,6 +268,11 @@ const requiredAccountMappings = [
  */
 const defaultImportRunBudgetMs = 20_000;
 
+/** Uber store ids are UUIDs, so two spellings differing only in case are the same store. */
+function sameUberStore(left: string, right: string) {
+  return left.toLowerCase() === right.toLowerCase();
+}
+
 /** Uber store ids are UUIDs, as shown in Uber's test-store details and Store API. */
 const uberStoreIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -3769,7 +3774,7 @@ export class OnboardingService {
     // signed-in account does not manage, so a typed id is accepted only when nothing was listed.
     const typedStoreId = input.storeId.trim().toLowerCase();
     const store =
-      ticket.stores.find((row) => row.storeId === input.storeId) ??
+      ticket.stores.find((row) => sameUberStore(row.storeId, input.storeId)) ??
       (ticket.stores.length === 0 && uberStoreIdPattern.test(typedStoreId)
         ? { storeId: typedStoreId, name: `Uber store ${typedStoreId.slice(0, 8)}` }
         : undefined);
@@ -3831,13 +3836,19 @@ export class OnboardingService {
       winner &&
       (winner.tenant_id !== this.actor.tenantId || winner.connection_id !== connectionId)
     ) {
-      await this.retireUberStoreMappings(connectionId, () => true);
+      // Withdraw only this attempt's store; the branch keeps any store it had before.
+      await this.reconcileUberStoreMappings(connectionId, (externalId) =>
+        sameUberStore(externalId, store.storeId) ? "DISABLED" : undefined,
+      );
       throw validation("This Uber store is already linked to another Seramet location");
     }
-    // One Uber store per branch: re-read the connection so overlapping links in two tabs both
-    // keep only the store the connection finally points at.
+    // One Uber store per branch: every link ends by matching all store mappings to the store
+    // the connection finally points at, so overlapping links in two tabs settle on that store
+    // (whichever finishes last re-reads the last saved connection) instead of disabling both.
     const finalStoreId = await this.configuredUberStore(connectionId);
-    await this.retireUberStoreMappings(connectionId, (externalId) => externalId !== finalStoreId);
+    await this.reconcileUberStoreMappings(connectionId, (externalId) =>
+      finalStoreId && sameUberStore(externalId, finalStoreId) ? "MAPPED" : "DISABLED",
+    );
     await this.attachChannelConnection(orderChannelId, connectionId);
     return { connection, store };
   }
@@ -3850,7 +3861,7 @@ export class OnboardingService {
          JOIN provider_connections c ON c.tenant_id=m.tenant_id AND c.id=m.connection_id
          JOIN tenants t ON t.id=m.tenant_id AND t.active=1
          WHERE m.provider_id=? AND m.resource_type='STORE' AND m.status='MAPPED'
-           AND m.external_id=? AND c.environment=? AND c.status<>'DISABLED'
+           AND LOWER(m.external_id)=LOWER(?) AND c.environment=? AND c.status<>'DISABLED'
          ORDER BY m.created_at, m.tenant_id, m.id LIMIT 1`,
       )
       .bind(uberEatsDefinition.id, storeId, environment)
@@ -3874,20 +3885,20 @@ export class OnboardingService {
     }
   }
 
-  /** Disables store mappings through the repository so the stored mapping record agrees. */
-  private async retireUberStoreMappings(
+  /**
+   * Sets each store mapping of the connection to the status `target` returns (undefined leaves
+   * it alone), through the repository so the stored mapping record agrees with the column.
+   */
+  private async reconcileUberStoreMappings(
     connectionId: string,
-    shouldRetire: (externalId: string) => boolean,
+    target: (externalId: string) => "MAPPED" | "DISABLED" | undefined,
   ) {
     const repository = createIntegrationRepository(this.db);
     for (const mapping of await repository.listMappings(this.actor.tenantId, connectionId)) {
-      if (
-        mapping.resourceType !== "STORE" ||
-        mapping.status === "DISABLED" ||
-        !shouldRetire(mapping.externalId)
-      )
-        continue;
-      await repository.upsertMapping({ ...mapping, status: "DISABLED", updatedAt: now() });
+      if (mapping.resourceType !== "STORE") continue;
+      const status = target(mapping.externalId);
+      if (!status || mapping.status === status) continue;
+      await repository.upsertMapping({ ...mapping, status, updatedAt: now() });
     }
   }
 
