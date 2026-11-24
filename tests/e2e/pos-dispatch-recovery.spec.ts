@@ -30,8 +30,9 @@ test("POS displays restaurant time and missing routing cannot dispatch a new ord
     );
   const before = await count();
   await page.getByRole("button", { name: "Place Order", exact: true }).click();
-  await expect(page.getByText(/Kitchen routing is unavailable:/)).toBeVisible();
-  await expect(page.getByRole("link", { name: "Check printers and kitchen routes" })).toBeVisible();
+  const island = page.getByRole("alert").filter({ hasText: "Order not placed" });
+  await expect(island).toBeVisible();
+  await expect(island.getByRole("link", { name: "No kitchen route set up" })).toBeVisible();
   await expect(page.getByPlaceholder("Item note")).toHaveValue("No onion - preserve cashier work");
   expect(await count()).toBe(before);
 });
@@ -169,21 +170,16 @@ test("another terminal's durable acknowledgement clears a recovered order; uncer
       await expect(page.getByRole("button", { name: "Place Order", exact: true })).toBeEnabled();
       await page.getByRole("button", { name: "Place Order", exact: true }).click();
       if (outcome === "BRIDGE_ACCEPTED") {
-        await expect(
-          page.getByText(`${order.id} is already in kitchen; no new KOT is required.`, {
-            exact: true,
-          }),
-        ).toBeVisible();
+        const placed = page.getByRole("status").filter({ hasText: "Order placed" });
+        await expect(placed).toBeVisible();
+        await expect(placed.getByText(order.id, { exact: true })).toBeVisible();
         await expect(page.getByPlaceholder("Item note")).toHaveCount(0);
       } else {
         // The order still clears: it stays in Orders, and only the ticket needs checking.
+        const saved = page.getByRole("alert").filter({ hasText: "Order saved · not printed" });
+        await expect(saved).toBeVisible();
         await expect(
-          page.getByText(
-            `${order.id} is in Orders, but its kitchen ticket isn't confirmed. Check it in Printers.`,
-            {
-              exact: true,
-            },
-          ),
+          saved.getByRole("link", { name: `${order.id} · check the ticket in Printers` }),
         ).toBeVisible();
         await expect(page.getByPlaceholder("Item note")).toHaveCount(0);
       }
