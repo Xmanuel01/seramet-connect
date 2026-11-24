@@ -3,6 +3,17 @@ import type { ManualMenuItemCreateInput, MenuItemUpdateInput } from "@/onboardin
 import { isCurrentFlow, onboardingStepNumber } from "@/onboarding/onboarding-steps";
 import { parseCsvRows, parseXlsxRows } from "@/lib/menu-import-export";
 import { getProviderRegistry } from "@/integrations/provider-registry";
+import { uberEatsDefinition } from "@/integrations/delivery/uber-eats/adapter";
+import {
+  openUberLinkTicket,
+  provisionUberStore,
+  signUberLinkState,
+  uberAuthorizeUrl,
+  uberCallbackPath,
+  uberPlatformCredentials,
+  uberPlatformSecretReference,
+  type UberEnvironment,
+} from "@/integrations/delivery/uber-eats/store-link";
 import { createIntegrationRepository } from "@/integrations/runtime/integration-repository";
 import type { D1Database, D1PreparedStatement } from "@/server/database/d1";
 import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
@@ -3690,6 +3701,167 @@ export class OnboardingService {
       capabilities: provider.definition.capabilities,
       secretConfigured: Boolean(secretReference),
     };
+  }
+
+  /** Step 1 of linking Uber Eats: the Uber sign-in URL for this branch. */
+  async startUberEatsLink(input: {
+    branchId: string;
+    environment: UberEnvironment;
+    orderChannelId?: string;
+  }) {
+    this.require(permissions.settingsIntegrationManage);
+    await this.assertBranch(input.branchId);
+    await this.assertEntitledWhenManaged("integrations.delivery");
+    const credentials = uberPlatformCredentials(this.env, input.environment);
+    const secret = this.env.SERAMET_JWT_SECRET;
+    const base = this.env.SERAMET_CALLBACK_BASE_URL?.replace(/\/$/, "");
+    if (!credentials || !secret || !base)
+      throw validation(
+        input.environment === "SANDBOX"
+          ? "Uber Eats testing is not switched on for this server yet"
+          : "Uber Eats is not switched on for this server yet",
+      );
+    if (input.orderChannelId) await this.requireMarketplaceChannel(input.orderChannelId);
+    const state = await signUberLinkState(
+      {
+        tenantId: this.actor.tenantId,
+        branchId: input.branchId,
+        actorId: this.actor.id,
+        environment: input.environment,
+        ...(input.orderChannelId ? { orderChannelId: input.orderChannelId } : {}),
+      },
+      secret,
+    );
+    return {
+      url: uberAuthorizeUrl({
+        environment: input.environment,
+        clientId: credentials.clientId,
+        redirectUri: `${base}${uberCallbackPath}`,
+        state,
+      }),
+    };
+  }
+
+  /** The Uber stores a finished sign-in can link, without the merchant token. */
+  async uberEatsLinkStores(ticket: string) {
+    this.require(permissions.settingsIntegrationManage);
+    const opened = await this.openUberTicket(ticket);
+    return {
+      environment: opened.environment,
+      branchId: opened.branchId,
+      ...(opened.orderChannelId ? { orderChannelId: opened.orderChannelId } : {}),
+      stores: opened.stores,
+    };
+  }
+
+  /** Step 2: makes Seramet the chosen store's order manager and links it to the branch. */
+  async linkUberEatsStore(input: { ticket: string; storeId: string; orderChannelId?: string }) {
+    this.require(permissions.settingsIntegrationManage);
+    this.require(permissions.integrationsMappingManage);
+    const ticket = await this.openUberTicket(input.ticket);
+    await this.assertBranch(ticket.branchId);
+    const store = ticket.stores.find((row) => row.storeId === input.storeId);
+    if (!store) throw validation("Choose one of the stores on the signed-in Uber account");
+    const orderChannelId = input.orderChannelId ?? ticket.orderChannelId;
+    if (orderChannelId) await this.requireMarketplaceChannel(orderChannelId);
+    const connectionId = stableId("connection", `${uberEatsDefinition.id}:${ticket.branchId}`);
+    const claimed = await this.db
+      .prepare(
+        `SELECT m.tenant_id,m.connection_id FROM provider_mappings m
+         JOIN provider_connections c ON c.tenant_id=m.tenant_id AND c.id=m.connection_id
+         WHERE m.provider_id=? AND m.resource_type='STORE' AND m.status='MAPPED'
+           AND m.external_id=? AND c.environment=? LIMIT 1`,
+      )
+      .bind(uberEatsDefinition.id, store.storeId, ticket.environment)
+      .first<{ tenant_id: string; connection_id: string }>();
+    if (
+      claimed &&
+      (claimed.tenant_id !== this.actor.tenantId || claimed.connection_id !== connectionId)
+    )
+      throw validation("This Uber store is already linked to another Seramet location");
+    await provisionUberStore({
+      fetch: (url, init) => fetch(url, init),
+      environment: ticket.environment,
+      accessToken: ticket.merchantAccessToken,
+      storeId: store.storeId,
+      integratorStoreId: ticket.branchId,
+      integratorBrandId: this.actor.tenantId,
+    });
+    const connection = await this.configureProviderConnection({
+      id: connectionId,
+      branchId: ticket.branchId,
+      providerId: uberEatsDefinition.id,
+      environment: ticket.environment,
+      secretReference: uberPlatformSecretReference(ticket.environment),
+      configuration: {
+        externalStoreId: store.storeId,
+        externalStoreName: store.name,
+        ...(orderChannelId ? { orderChannelId } : {}),
+      },
+    });
+    // One Uber store per branch connection: an earlier store (such as the test store before
+    // going live) stops receiving this branch's orders.
+    await this.db
+      .prepare(
+        `UPDATE provider_mappings SET status='DISABLED',updated_at=?
+         WHERE tenant_id=? AND connection_id=? AND resource_type='STORE' AND external_id<>?`,
+      )
+      .bind(now(), this.actor.tenantId, connectionId, store.storeId)
+      .run();
+    await this.configureExternalMapping({
+      connectionId,
+      branchId: ticket.branchId,
+      resourceType: "STORE",
+      internalId: ticket.branchId,
+      externalId: store.storeId,
+      status: "MAPPED",
+      reviewConfirmed: true,
+      metadata: { displayName: store.name, linkedThrough: "UBER_SIGN_IN" },
+    });
+    if (orderChannelId) await this.attachChannelConnection(orderChannelId, connectionId);
+    return { connection, store };
+  }
+
+  private async openUberTicket(ticket: string) {
+    const secret = this.env.SERAMET_JWT_SECRET;
+    const opened = secret ? await openUberLinkTicket(ticket, secret) : undefined;
+    if (!opened || opened.tenantId !== this.actor.tenantId || opened.actorId !== this.actor.id)
+      throw validation("The Uber sign-in has expired. Sign in to Uber again.");
+    return opened;
+  }
+
+  private async requireMarketplaceChannel(channelId: string) {
+    const channel = await this.db
+      .prepare(
+        `SELECT id FROM order_channels
+         WHERE tenant_id=? AND id=? AND active=1 AND channel_type='MARKETPLACE'`,
+      )
+      .bind(this.actor.tenantId, channelId)
+      .first();
+    if (!channel) throw validation("Choose an active delivery-app order channel");
+  }
+
+  private async attachChannelConnection(channelId: string, connectionId: string) {
+    const row = await this.db
+      .prepare("SELECT payload_json FROM order_channels WHERE tenant_id=? AND id=?")
+      .bind(this.actor.tenantId, channelId)
+      .first<{ payload_json: string }>();
+    if (!row) return;
+    let payload: Record<string, unknown> = {};
+    try {
+      payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+    } catch {
+      payload = {};
+    }
+    if (payload["deliveryProviderConnectionId"] === connectionId) return;
+    await this.db
+      .prepare("UPDATE order_channels SET payload_json=? WHERE tenant_id=? AND id=?")
+      .bind(
+        json({ ...payload, deliveryProviderConnectionId: connectionId }),
+        this.actor.tenantId,
+        channelId,
+      )
+      .run();
   }
 
   providerDefinitions() {

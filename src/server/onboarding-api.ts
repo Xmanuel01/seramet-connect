@@ -589,6 +589,38 @@ export async function handleOnboardingApi(
       201,
     );
   }
+  if (url.pathname === "/api/seramet/setup/uber-eats/authorize" && request.method === "POST") {
+    const input = await readObject(request);
+    const branchId = text(input["branchId"]);
+    if (!branchId) throw new ServerOperationError("VALIDATION_FAILED", 400, "Choose a branch");
+    const orderChannelId = text(input["orderChannelId"]);
+    return json({
+      ok: true,
+      ...(await service.startUberEatsLink({
+        branchId,
+        environment: input["environment"] === "PRODUCTION" ? "PRODUCTION" : "SANDBOX",
+        ...(orderChannelId ? { orderChannelId } : {}),
+      })),
+    });
+  }
+  if (url.pathname === "/api/seramet/setup/uber-eats/stores" && request.method === "POST") {
+    const input = await readObject(request);
+    return json({ ok: true, ...(await service.uberEatsLinkStores(text(input["ticket"]))) });
+  }
+  if (url.pathname === "/api/seramet/setup/uber-eats/link" && request.method === "POST") {
+    const input = await readObject(request);
+    const storeId = text(input["storeId"]);
+    if (!storeId) throw new ServerOperationError("VALIDATION_FAILED", 400, "Choose an Uber store");
+    const orderChannelId = text(input["orderChannelId"]);
+    const linked = await service.linkUberEatsStore({
+      ticket: text(input["ticket"]),
+      storeId,
+      ...(orderChannelId ? { orderChannelId } : {}),
+    });
+    // The order runtime reads connections and channels from the cached configuration.
+    await invalidateAuthoritativeConfiguration(env.SERAMET_DB, actor.tenantId);
+    return json({ ok: true, ...linked }, 201);
+  }
   if (url.pathname === "/api/seramet/setup/providers" && request.method === "GET") {
     return json({ ok: true, providers: service.providerDefinitions() });
   }
@@ -784,4 +816,16 @@ function json(payload: unknown, status = 200) {
       "x-content-type-options": "nosniff",
     },
   });
+}
+
+/** A small JSON object body; anything else reads as empty so field checks report what is missing. */
+async function readObject(request: Request): Promise<Record<string, unknown>> {
+  const body = (await request.json().catch(() => undefined)) as unknown;
+  return body && typeof body === "object" && !Array.isArray(body)
+    ? (body as Record<string, unknown>)
+    : {};
+}
+
+function text(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
 }

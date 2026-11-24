@@ -1,3 +1,16 @@
+import {
+  exchangeUberAuthorizationCode,
+  listUberStores,
+  sealUberLinkTicket,
+  uberCallbackPath,
+  uberDeliveryEnvironment,
+  uberLinkReturnPath,
+  uberPlatformCredentials,
+  uberWebhookPath,
+  verifyUberLinkState,
+  verifyUberSignature,
+} from "@/integrations/delivery/uber-eats/store-link";
+import { uberEatsDefinition } from "@/integrations/delivery/uber-eats/adapter";
 import { unmatchedDirectPayments } from "@/payments/mpesa-matching";
 import { parseMajorAmount } from "@/payments/money";
 import { withCachedSchemaCheck } from "@/server/database/schema-check-cache";
@@ -125,7 +138,11 @@ const configurationChangingPrefixes = [
   "/api/seramet/tables",
   "/api/seramet/inventory/warehouses",
 ];
-const configurationNeutralPrefixes = ["/api/seramet/integrations/webhooks"];
+const configurationNeutralPrefixes = [
+  "/api/seramet/integrations/webhooks",
+  // Uber sign-in only reads the Uber account; linking the store happens in Setup Centre.
+  uberCallbackPath,
+];
 
 function changesConfiguration(path: string) {
   if (configurationNeutralPrefixes.some((prefix) => path.startsWith(prefix))) return false;
@@ -417,6 +434,16 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
         repo,
         decodeURIComponent(genericWebhookRoute[1]!),
       );
+    }
+
+    // Uber sends every store's events to the one webhook URL of Seramet's Uber app.
+    if (url.pathname === uberWebhookPath && request.method === "POST") {
+      await consumeRateLimit(env, "webhook:UBER_EATS:platform", sensitiveRateLimits.webhook);
+      return await receiveUberPlatformWebhook(request, env);
+    }
+    if (url.pathname === uberCallbackPath && request.method === "GET") {
+      await consumeRateLimit(env, "uber-eats:callback", sensitiveRateLimits.webhook);
+      return await completeUberSignIn(url, env);
     }
 
     // An optional last segment carries the connection's webhook key for providers, such as
@@ -956,6 +983,111 @@ async function receiveIntegrationWebhook(
     },
   });
   return integrationWebhookAcknowledgement(providerCode, result);
+}
+
+/**
+ * Uber's app-wide webhook: checks the signature with the platform client secret, then hands the
+ * event to the one restaurant connection that maps the Uber store (`meta.user_id`). Events for a
+ * store no restaurant has linked are acknowledged and dropped so Uber does not keep retrying.
+ */
+async function receiveUberPlatformWebhook(request: Request, env: SerametEnv) {
+  const contentLength = Number(request.headers.get("content-length") ?? 0);
+  if (contentLength > 1_048_576) throw new SerametHttpError(413, "Webhook body is too large");
+  const rawBody = new Uint8Array(await request.arrayBuffer());
+  const environment = uberDeliveryEnvironment(request.headers.get("x-environment"));
+  const credentials = uberPlatformCredentials(env, environment);
+  if (!credentials) throw new SerametHttpError(503, "Uber Eats is not configured on this server");
+  const signature = request.headers.get("x-uber-signature") ?? "";
+  if (!(await verifyUberSignature(rawBody, signature, credentials.clientSecret)))
+    throw new SerametHttpError(401, "Webhook signature is invalid");
+  let storeId: string | undefined;
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(rawBody)) as {
+      meta?: { user_id?: unknown };
+    };
+    storeId = typeof parsed.meta?.user_id === "string" ? parsed.meta.user_id : undefined;
+  } catch {
+    throw new SerametHttpError(400, "Webhook body is not JSON");
+  }
+  if (!storeId || !env.SERAMET_DB) return new Response(null, { status: 200 });
+  const owners =
+    (
+      await env.SERAMET_DB.prepare(
+        `SELECT m.connection_id FROM provider_mappings m
+         JOIN provider_connections c ON c.tenant_id=m.tenant_id AND c.id=m.connection_id
+         JOIN tenants t ON t.id=m.tenant_id AND t.active=1
+         WHERE m.provider_id=? AND m.resource_type='STORE' AND m.status='MAPPED'
+           AND m.external_id=? AND c.environment=? AND c.status<>'DISABLED'
+         LIMIT 2`,
+      )
+        .bind(uberEatsDefinition.id, storeId, environment)
+        .all<{ connection_id: string }>()
+    ).results ?? [];
+  if (owners.length !== 1) {
+    console.warn(
+      JSON.stringify({
+        event: "uber_webhook_unrouted",
+        environment,
+        reason: owners.length ? "store linked to more than one connection" : "store not linked",
+      }),
+    );
+    return new Response(null, { status: 200 });
+  }
+  return receiveIntegrationWebhook(
+    new Request(request.url, { method: "POST", headers: request.headers, body: rawBody }),
+    env,
+    uberEatsDefinition.code,
+    owners[0]!.connection_id,
+  );
+}
+
+/**
+ * Uber redirects the browser here after the restaurant signs in. The merchant token and its
+ * store list go back to Setup Centre sealed in the URL fragment for the store-choice step.
+ */
+async function completeUberSignIn(url: URL, env: SerametEnv) {
+  const back = (fragment: string) =>
+    new Response(null, {
+      status: 303,
+      headers: {
+        Location: `${uberLinkReturnPath}?section=DELIVERY_INTEGRATIONS#${fragment}`,
+        "Cache-Control": "no-store",
+        "Referrer-Policy": "no-referrer",
+      },
+    });
+  const secret = env.SERAMET_JWT_SECRET;
+  const state = secret
+    ? await verifyUberLinkState(url.searchParams.get("state") ?? "", secret)
+    : undefined;
+  if (!secret || !state) return back("uberError=expired");
+  if (url.searchParams.get("error")) return back("uberError=declined");
+  const credentials = uberPlatformCredentials(env, state.environment);
+  const code = url.searchParams.get("code");
+  if (!credentials || !code || !env.SERAMET_CALLBACK_BASE_URL) return back("uberError=config");
+  try {
+    const merchantAccessToken = await exchangeUberAuthorizationCode({
+      fetch: (input, init) => fetch(input, init),
+      environment: state.environment,
+      ...credentials,
+      redirectUri: `${env.SERAMET_CALLBACK_BASE_URL.replace(/\/$/, "")}${uberCallbackPath}`,
+      code,
+    });
+    const stores = await listUberStores({
+      fetch: (input, init) => fetch(input, init),
+      environment: state.environment,
+      accessToken: merchantAccessToken,
+    });
+    const ticket = await sealUberLinkTicket({ ...state, merchantAccessToken, stores }, secret);
+    return back(`uberLink=${ticket}`);
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        event: "uber_sign_in_failed",
+        message: error instanceof Error ? error.message : "unknown",
+      }),
+    );
+    return back("uberError=uber");
+  }
 }
 
 export function integrationWebhookAcknowledgement(

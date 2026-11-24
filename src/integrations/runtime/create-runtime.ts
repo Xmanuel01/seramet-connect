@@ -122,11 +122,16 @@ function createServerCredentialResolver(env: SerametEnv, configuration: Configur
                 : provider.code === "BANK_FEED"
                   ? compact({ webhookSecret: env.SERAMET_BANK_WEBHOOK_SECRET })
                   : provider.code === "UBER_EATS"
-                    ? compact({
-                        clientId: env.SERAMET_UBER_CLIENT_ID,
-                        clientSecret: env.SERAMET_UBER_CLIENT_SECRET,
-                        webhookSigningSecret: env.SERAMET_UBER_WEBHOOK_SIGNING_SECRET,
-                      })
+                    ? connection.environment === "SANDBOX"
+                      ? compact({
+                          clientId: env.SERAMET_UBER_SANDBOX_CLIENT_ID,
+                          clientSecret: env.SERAMET_UBER_SANDBOX_CLIENT_SECRET,
+                        })
+                      : compact({
+                          clientId: env.SERAMET_UBER_CLIENT_ID,
+                          clientSecret: env.SERAMET_UBER_CLIENT_SECRET,
+                          webhookSigningSecret: env.SERAMET_UBER_WEBHOOK_SIGNING_SECRET,
+                        })
                     : provider.code === "GLOVO"
                       ? compact({
                           clientId: env.SERAMET_GLOVO_CLIENT_ID,

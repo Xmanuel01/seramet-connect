@@ -704,13 +704,15 @@ async function verifyUberWebhook(request: ProviderWebhookRequest) {
   return constantTimeEqual(toHex(new Uint8Array(digest)), signature.toLowerCase());
 }
 
+// Deny types are the Order Fulfillment API's `deny_reason.type` enum (ITEM_ISSUE, STORE_CLOSED,
+// ORDER_VALIDATION, PRICING, CAPACITY, TECHNICAL_FAILURE, OTHER, ...); Uber refuses any other value.
 function uberRejectionReason(
   reason: import("@/integrations/marketplace/types").MarketplaceRejectionReason,
 ) {
   const mapping: Record<typeof reason, { type: string; info: string; client_error_code: string }> =
     {
       ITEM_UNAVAILABLE: {
-        type: "ITEM_AVAILABILITY",
+        type: "ITEM_ISSUE",
         info: "One or more items are unavailable",
         client_error_code: "SERAMET_ITEM_UNAVAILABLE",
       },
@@ -720,27 +722,27 @@ function uberRejectionReason(
         client_error_code: "SERAMET_STORE_CLOSED",
       },
       ITEM_MAPPING_ERROR: {
-        type: "OTHER",
+        type: "ORDER_VALIDATION",
         info: "Order item mapping requires attention",
         client_error_code: "SERAMET_ITEM_MAPPING_ERROR",
       },
       PRICE_MISMATCH: {
-        type: "OTHER",
+        type: "PRICING",
         info: "Order pricing could not be validated",
         client_error_code: "SERAMET_PRICE_MISMATCH",
       },
       INVALID_ORDER: {
-        type: "OTHER",
+        type: "ORDER_VALIDATION",
         info: "Order validation failed",
         client_error_code: "SERAMET_INVALID_ORDER",
       },
       CAPACITY: {
-        type: "KITCHEN_FULL",
+        type: "CAPACITY",
         info: "The restaurant cannot prepare the order in time",
         client_error_code: "SERAMET_CAPACITY",
       },
       TECHNICAL_FAILURE: {
-        type: "OTHER",
+        type: "TECHNICAL_FAILURE",
         info: "A technical failure prevented acceptance",
         client_error_code: "SERAMET_TECHNICAL_FAILURE",
       },
