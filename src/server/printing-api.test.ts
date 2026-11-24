@@ -1035,4 +1035,7 @@ it("saves how kitchen orders reach the kitchen for the manager's branch, with an
   ).rejects.toMatchObject({ status: 403 });
   actor.permissions = [permissions.settingsHardwareView];
   await expect(put({ kitchenMode: "PRINTER_ONLY" })).rejects.toMatchObject({ status: 403 });
+  // Choosing it is an onboarding step, so whoever may run setup can save it too.
+  actor.permissions = [permissions.setupManage];
+  expect((await put({ kitchenMode: "PRINTER_ONLY" }))!.status).toBe(200);
 });

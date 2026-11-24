@@ -13,7 +13,11 @@ vi.mock("@/lib/seramet-auth", async (original) => ({
   ...(await original<typeof import("@/lib/seramet-auth")>()),
   authenticateSerametRequest: vi.fn(async () => actor),
 }));
-import { handleSerametApiRequest, filterStateForActor } from "@/lib/seramet-api";
+import {
+  handleSerametApiRequest,
+  filterStateForActor,
+  keepPayUnlessPayroll,
+} from "@/lib/seramet-api";
 import { setConfigurationRepositoryForTests } from "@/platform/repositories/configuration-repository";
 describe("staff role/device HTTP boundaries", () => {
   let db: SqliteD1TestDatabase, order: TransactionOrder;
@@ -216,6 +220,34 @@ describe("staff role/device HTTP boundaries", () => {
     // A supervisor closes the day, so sees the branch drawers and staff names, never pay.
     expect(attendanceSupervisor.cashDrawers.map((row) => row.id)).toEqual(["private-drawer"]);
     expect(attendanceSupervisor.employees.map((row) => row.netMonthlyPay)).toEqual([0]);
+  });
+  it("never writes the blanked pay back when a non-payroll reader saves a snapshot", () => {
+    const stored = createEmptyTransactionState(tenant);
+    const employee = {
+      id: "paid-employee",
+      tenantId: tenant,
+      branchId: branch,
+      name: "Paid employee",
+      role: "Employee",
+      department: "Kitchen",
+      branch: "Westlands",
+      shift: "Day",
+      netMonthlyPay: 30000,
+      monthlyWorkDays: 26,
+      standardDailyHours: 8,
+      active: true,
+    };
+    stored.employees = [employee];
+    const supervisor = { ...actor, permissions: staffRolePresets.supervisor!.permissions };
+    const seen = filterStateForActor(stored, { ...supervisor, salesTerminal: false });
+    expect(seen.employees[0]?.netMonthlyPay).toBe(0);
+    const sent = { ...seen, employees: [...seen.employees, { ...employee, id: "new-hire" }] };
+    expect(
+      keepPayUnlessPayroll(stored, sent, supervisor).employees.map((row) => row.netMonthlyPay),
+    ).toEqual([30000, 0]);
+    const payroll = { ...actor, permissions: [permissions.payrollManage] };
+    const raise = { ...stored, employees: [{ ...employee, netMonthlyPay: 32000 }] };
+    expect(keepPayUnlessPayroll(stored, raise, payroll).employees[0]?.netMonthlyPay).toBe(32000);
   });
   it("does not let a multi-branch terminal submit sales commands to another active branch", () => {
     const other = (

@@ -768,8 +768,14 @@ export async function handlePrintingApi(
     return respond(await readReceiptLogos(db, actor.tenantId, actor.branchId));
   }
   if (url.pathname === "/api/seramet/printing/kitchen-mode" && request.method === "PUT") {
-    // How kitchen orders reach the kitchen, for a branch with or without printers.
-    manage(actor);
+    // How kitchen orders reach the kitchen, for a branch with or without printers. It is also
+    // an onboarding step, so whoever may run setup can choose it as well.
+    requireFullAuthentication(actor);
+    if (
+      !actor.permissions.includes(permissions.settingsHardwareManage) &&
+      !actor.permissions.includes(permissions.setupManage)
+    )
+      requirePermission(actor, permissions.settingsHardwareManage);
     const parsedMode = z
       .object({
         branchId: z.string().min(1).optional(),
