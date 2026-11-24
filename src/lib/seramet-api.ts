@@ -998,7 +998,7 @@ async function receiveUberPlatformWebhook(request: Request, env: SerametEnv) {
   const credentials = uberPlatformCredentials(env, environment);
   if (!credentials) throw new SerametHttpError(503, "Uber Eats is not configured on this server");
   const signature = request.headers.get("x-uber-signature") ?? "";
-  if (!(await verifyUberSignature(rawBody, signature, credentials.clientSecret)))
+  if (!(await verifyUberSignature(rawBody, signature, credentials.webhookSigningSecret)))
     throw new SerametHttpError(401, "Webhook signature is invalid");
   let storeId: string | undefined;
   try {

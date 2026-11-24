@@ -42,14 +42,18 @@ describe("Uber Eats store link", () => {
       SERAMET_UBER_CLIENT_SECRET: "live-secret",
       SERAMET_UBER_SANDBOX_CLIENT_ID: "test-id",
       SERAMET_UBER_SANDBOX_CLIENT_SECRET: "test-secret",
+      SERAMET_UBER_SANDBOX_WEBHOOK_SIGNING_SECRET: "test-signing-key",
     };
     expect(uberPlatformCredentials(env, "SANDBOX")).toEqual({
       clientId: "test-id",
       clientSecret: "test-secret",
+      webhookSigningSecret: "test-signing-key",
     });
+    // Without a dashboard signing key, Uber signs webhooks with the client secret.
     expect(uberPlatformCredentials(env, "PRODUCTION")).toEqual({
       clientId: "live-id",
       clientSecret: "live-secret",
+      webhookSigningSecret: "live-secret",
     });
     expect(uberPlatformCredentials({ SERAMET_UBER_CLIENT_ID: "only-id" }, "PRODUCTION")).toBe(
       undefined,

@@ -15,6 +15,8 @@ export type UberPlatformEnv = {
   SERAMET_UBER_CLIENT_SECRET?: string;
   SERAMET_UBER_SANDBOX_CLIENT_ID?: string;
   SERAMET_UBER_SANDBOX_CLIENT_SECRET?: string;
+  SERAMET_UBER_WEBHOOK_SIGNING_SECRET?: string;
+  SERAMET_UBER_SANDBOX_WEBHOOK_SIGNING_SECRET?: string;
 };
 
 export const uberLoginBaseUrls: Record<UberEnvironment, string> = {
@@ -45,9 +47,19 @@ export function uberPlatformCredentials(env: UberPlatformEnv, environment: UberE
     environment === "SANDBOX"
       ? env.SERAMET_UBER_SANDBOX_CLIENT_SECRET
       : env.SERAMET_UBER_CLIENT_SECRET;
-  return clientId?.trim() && clientSecret?.trim()
-    ? { clientId: clientId.trim(), clientSecret: clientSecret.trim() }
-    : undefined;
+  if (!clientId?.trim() || !clientSecret?.trim()) return undefined;
+  // The dashboard's "Basic HMAC" webhook setting signs with its own key; without one, Uber
+  // signs with the client secret.
+  const signingKey = (
+    environment === "SANDBOX"
+      ? env.SERAMET_UBER_SANDBOX_WEBHOOK_SIGNING_SECRET
+      : env.SERAMET_UBER_WEBHOOK_SIGNING_SECRET
+  )?.trim();
+  return {
+    clientId: clientId.trim(),
+    clientSecret: clientSecret.trim(),
+    webhookSigningSecret: signingKey || clientSecret.trim(),
+  };
 }
 
 export function uberAuthorizeUrl(input: {

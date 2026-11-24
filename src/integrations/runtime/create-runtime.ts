@@ -126,6 +126,7 @@ function createServerCredentialResolver(env: SerametEnv, configuration: Configur
                       ? compact({
                           clientId: env.SERAMET_UBER_SANDBOX_CLIENT_ID,
                           clientSecret: env.SERAMET_UBER_SANDBOX_CLIENT_SECRET,
+                          webhookSigningSecret: env.SERAMET_UBER_SANDBOX_WEBHOOK_SIGNING_SECRET,
                         })
                       : compact({
                           clientId: env.SERAMET_UBER_CLIENT_ID,
