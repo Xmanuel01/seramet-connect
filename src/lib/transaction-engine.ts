@@ -2408,7 +2408,9 @@ export const TransactionEngine = {
       draft.financialOverride,
       draft.delivery ?? order.delivery,
     );
-    if (draft.delivery) order.delivery = { ...order.delivery, ...draft.delivery };
+    // Delivery draft pricing treats an omitted charge as cleared, including after JSON transport.
+    if (draft.delivery)
+      order.delivery = { ...order.delivery, ...draft.delivery, charge: draft.delivery.charge };
     order.tenantId = scope.tenantId;
     order.branchId = scope.branchId;
     order.branch = scope.branch;
@@ -3057,7 +3059,8 @@ export const TransactionEngine = {
     if (draft.customerCode) order.customerCode = draft.customerCode;
     else delete order.customerCode;
     order.channel = draft.channel;
-    if (draft.delivery) order.delivery = { ...order.delivery, ...draft.delivery };
+    if (draft.delivery)
+      order.delivery = { ...order.delivery, ...draft.delivery, charge: draft.delivery.charge };
     order.cashier = draft.cashier;
     if (draft.waiter) order.waiter = draft.waiter;
     else delete order.waiter;

@@ -36,6 +36,7 @@ const allowed = new Set([
   "tests/e2e/printing-admin.spec.ts",
   "tests/e2e/pos-stability.spec.ts",
   "tests/e2e/pos-startup.spec.ts",
+  "tests/e2e/channel-rider-delivery.spec.ts",
 ]);
 if (
   focused.some(

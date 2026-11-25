@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { deliverySettingsSchema } from "@/delivery/delivery-charge";
+import {
+  deliverySettingsSchema,
+  deliverySettings,
+  withRiderDelivery,
+} from "@/delivery/delivery-charge";
 import { payoutAccountsSchema } from "@/payments/payout-accounts";
 import { SerametHttpError, type ServerActor } from "@/lib/seramet-auth";
 import { permissions } from "@/platform/permissions";
@@ -64,6 +68,7 @@ export const createOrderChannelInputSchema = z
       "OTHER",
     ]),
     useOnlinePrice: z.boolean(),
+    riderDeliveryEnabled: z.boolean().optional(),
     /** Omitted: dine-in channels need a table, others do not. */
     requiresTable: z.boolean().optional(),
     reason,
@@ -76,6 +81,7 @@ export const updateOrderChannelInputSchema = z
     useOnlinePrice: z.boolean().optional(),
     requiresTable: z.boolean().optional(),
     deliverySettings: deliverySettingsSchema.optional(),
+    riderDeliveryEnabled: z.boolean().optional(),
     payoutAccounts: payoutAccountsSchema.optional(),
     reason,
   })
@@ -86,6 +92,7 @@ export const updateOrderChannelInputSchema = z
       value.useOnlinePrice !== undefined ||
       value.requiresTable !== undefined ||
       value.deliverySettings !== undefined ||
+      value.riderDeliveryEnabled !== undefined ||
       value.payoutAccounts !== undefined,
     { message: "At least one channel setting is required" },
   );
@@ -348,7 +355,9 @@ export async function createOrderChannel(
       existing.displayName === parsed.displayName &&
       existing.channelType === parsed.channelType &&
       existing.metadata["useOnlinePrice"] === parsed.useOnlinePrice &&
-      (parsed.requiresTable === undefined || existing.requiresTable === parsed.requiresTable)
+      (parsed.requiresTable === undefined || existing.requiresTable === parsed.requiresTable) &&
+      (parsed.riderDeliveryEnabled === undefined ||
+        (deliverySettings(existing)?.fulfilment === "RESTAURANT") === parsed.riderDeliveryEnabled)
     ) {
       return { orderChannel: existing, duplicate: true };
     }
@@ -367,7 +376,12 @@ export async function createOrderChannel(
     requiresAddress: parsed.channelType === "OWN_DELIVERY",
     isExternallyPaid: parsed.channelType === "MARKETPLACE",
     sortOrder,
-    metadata: { useOnlinePrice: parsed.useOnlinePrice },
+    metadata: {
+      useOnlinePrice: parsed.useOnlinePrice,
+      ...(parsed.riderDeliveryEnabled
+        ? { deliverySettings: withRiderDelivery(undefined, true), defaultFulfilment: "RESTAURANT" }
+        : {}),
+    },
   };
   try {
     await db.batch([
@@ -403,7 +417,10 @@ export async function createOrderChannel(
       !winner.enabled ||
       winner.displayName !== parsed.displayName ||
       winner.channelType !== parsed.channelType ||
-      winner.metadata["useOnlinePrice"] !== parsed.useOnlinePrice
+      winner.metadata["useOnlinePrice"] !== parsed.useOnlinePrice ||
+      (parsed.riderDeliveryEnabled !== undefined &&
+        (deliverySettings(winner)?.fulfilment === "RESTAURANT") !== parsed.riderDeliveryEnabled) ||
+      (parsed.requiresTable !== undefined && winner.requiresTable !== parsed.requiresTable)
     ) {
       throw new SerametHttpError(409, "An order channel with this code already exists");
     }
@@ -427,6 +444,13 @@ export async function updateOrderChannel(
     orderChannelId,
   );
   if (!current) throw new SerametHttpError(404, "Order channel was not found");
+  if (parsed.riderDeliveryEnabled !== undefined && parsed.deliverySettings !== undefined)
+    throw new SerametHttpError(
+      422,
+      "Change rider delivery or detailed delivery settings, not both",
+    );
+  if (parsed.riderDeliveryEnabled !== undefined)
+    parsed.deliverySettings = withRiderDelivery(current, parsed.riderDeliveryEnabled);
   for (const branchId of new Set(
     parsed.deliverySettings?.rates.flatMap((rate) => rate.branchIds) ?? [],
   )) {

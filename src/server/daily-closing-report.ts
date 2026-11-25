@@ -215,6 +215,11 @@ export function closingReportSections(snapshot: ClosingSnapshot): ClosingReportS
             ["Discounts", money(components.totals.discountsMinor)],
             ["Net sales excluding service and tax", money(components.totals.netSalesMinor)],
             ["Service charges", money(components.totals.serviceChargeMinor)],
+            ["Delivery charges", money(components.totals.deliveryChargeMinor ?? 0)],
+            [
+              "Delivery owed to riders (before settlements)",
+              money(components.totals.deliveryPayableMinor ?? 0),
+            ],
             ["Tax", money(components.totals.taxMinor)],
             ["Invoice total", money(components.totals.totalMinor)],
           ]
@@ -226,6 +231,27 @@ export function closingReportSections(snapshot: ClosingSnapshot): ClosingReportS
           ],
   });
   const products = new Map<string, { name: string; quantityMicro: number }>();
+  if (report.delivery)
+    sections.push({
+      title: "Delivery fees invoiced (before refunds and rider settlements)",
+      rows: [
+        ["Delivery charges", money(report.delivery.chargedMinor)],
+        ["Business delivery revenue", money(report.delivery.businessRevenueMinor)],
+        ["Rider fee liability", money(report.delivery.riderPayableMinor)],
+        ...report.delivery.riders.map((rider): [string, string] => [
+          rider.name,
+          `${money(rider.payableMinor)} payable; invoices ${rider.invoiceIds.join(", ")}`,
+        ]),
+        ...(report.delivery.unclassifiedInvoiceIds.length
+          ? [
+              ["Needs reconciliation", report.delivery.unclassifiedInvoiceIds.join(", ")] as [
+                string,
+                string,
+              ],
+            ]
+          : []),
+      ],
+    });
   for (const invoice of report.invoices)
     for (const line of invoice.lines) {
       const key = line.productId ?? line.name;
@@ -592,6 +618,35 @@ export async function renderDailyClosingPdf(snapshot: ClosingSnapshot): Promise<
   );
   row("Branch manager", "____________________");
   row("Finance review", "____________________");
+
+  if (
+    report.delivery &&
+    (report.delivery.chargedMinor > 0 || report.delivery.unclassifiedInvoiceIds.length)
+  ) {
+    page = pdf.addPage([width, height]);
+    header("Delivery Fees & Rider Liability");
+    heading("Invoiced fees before refunds and settlements");
+    row("Delivery charges", money(report.delivery.chargedMinor));
+    row("Business delivery revenue", money(report.delivery.businessRevenueMinor));
+    row("Rider fee liability", money(report.delivery.riderPayableMinor));
+    heading("Riders");
+    for (const rider of report.delivery.riders) {
+      if (y < 130) {
+        page = pdf.addPage([width, height]);
+        header("Delivery Fees (continued)");
+      }
+      row(rider.name, money(rider.payableMinor));
+    }
+    if (report.delivery.unclassifiedInvoiceIds.length) {
+      if (y < 130) {
+        page = pdf.addPage([width, height]);
+        header("Delivery Fees (continued)");
+      }
+      note(
+        `${report.delivery.unclassifiedInvoiceIds.length} invoice(s) require delivery-fee classification. See the saved closing record.`,
+      );
+    }
+  }
 
   const footer = reportFooter(snapshot);
   const pages = pdf.getPages();

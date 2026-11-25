@@ -26,6 +26,7 @@ export function DeliverySettingsDialog({
     fulfilment: "NONE",
     beneficiary: "BUSINESS",
     allowManual: false,
+    allowOrderAmount: false,
     cashHandledBy: "COUNTER",
     scheduledTravelMinutes: 15,
     scheduledPrepMinutes: 25,
@@ -43,6 +44,7 @@ export function DeliverySettingsDialog({
                 fulfilment: "NONE",
                 beneficiary: "BUSINESS",
                 allowManual: false,
+                allowOrderAmount: false,
                 cashHandledBy: "COUNTER",
                 scheduledTravelMinutes: 15,
                 scheduledPrepMinutes: 25,
@@ -134,6 +136,16 @@ export function DeliverySettingsDialog({
               )}
               {draft.fulfilment === "RESTAURANT" && (
                 <>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={draft.allowOrderAmount}
+                      onChange={(event) =>
+                        setDraft({ ...draft, allowOrderAmount: event.target.checked })
+                      }
+                    />
+                    Enter delivery amount on each order
+                  </label>
                   <label className="grid gap-1 text-sm">
                     Delivery fee belongs to
                     <select

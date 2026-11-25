@@ -18,7 +18,7 @@ import { formatMoney } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import type { TransactionOrder } from "@/lib/transaction-engine";
-import { parseMajorAmount } from "@/payments/money";
+import { parseMajorAmount, majorFromMinor } from "@/payments/money";
 import { permissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { cn } from "@/lib/utils";
@@ -32,6 +32,7 @@ type DeliveryTask = {
   rider: string;
   branch: string;
   value: number;
+  deliveryFee: number;
   status: string;
   eta: string;
   ownDispatch: boolean;
@@ -191,6 +192,7 @@ function Delivery() {
             : (providerRider ?? `${channel.displayName} rider`),
           branch: order.branch,
           value: order.total,
+          deliveryFee: order.delivery?.charge?.amountMinor ?? 0,
           status: deliveryStatus(order, ownDispatch),
           eta: deliveryEta(order),
           ownDispatch,
@@ -454,6 +456,21 @@ function Delivery() {
       label: "Funds",
       render: (row) => <Status>{row.fundsStatus}</Status>,
     },
+    {
+      key: "deliveryFee",
+      label: "Delivery fee",
+      align: "right",
+      render: (row) => (
+        <span className="num">
+          {formatMoney(
+            majorFromMinor(
+              row.orderRecord.delivery?.charge?.amountMinor ?? 0,
+              tenant.defaultCurrency,
+            ),
+          )}
+        </span>
+      ),
+    },
     { key: "eta", label: "ETA" },
     { key: "status", label: "Status", render: (row) => <Status>{row.status}</Status> },
   ];
@@ -554,6 +571,43 @@ function Delivery() {
             const recorded = customerCollectedAmount(state, row.orderRecord);
             return (
               <div className="grid gap-3 text-[12px]">
+                <dl className="grid gap-2 sm:grid-cols-2">
+                  {(
+                    [
+                      ["Customer", row.orderRecord.delivery?.recipientName],
+                      ["Phone", row.orderRecord.delivery?.phone],
+                      ["Phone code", row.orderRecord.delivery?.phoneCode],
+                      ["Delivery address", row.orderRecord.delivery?.address],
+                      ["Door / unit", row.orderRecord.delivery?.doorNumber],
+                    ] as const
+                  )
+                    .filter(([, value]) => value?.trim())
+                    .map(([label, value]) => (
+                      <div key={label} className="min-w-0">
+                        <dt className="text-muted-foreground">{label}</dt>
+                        <dd className="break-words font-semibold">{value}</dd>
+                      </div>
+                    ))}
+                  <div>
+                    <dt className="text-muted-foreground">Delivery fee</dt>
+                    <dd className="num font-semibold">
+                      {formatMoney(
+                        majorFromMinor(
+                          row.orderRecord.delivery?.charge?.amountMinor ?? 0,
+                          tenant.defaultCurrency,
+                        ),
+                      )}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Fee recipient</dt>
+                    <dd>
+                      {row.orderRecord.delivery?.charge?.beneficiary === "RIDER"
+                        ? row.rider
+                        : "Business"}
+                    </dd>
+                  </div>
+                </dl>
                 <div className="flex flex-wrap items-center gap-2">
                   <select
                     value={
