@@ -266,6 +266,8 @@ export type ProviderSetupInput = {
   credentials?: Record<string, string>;
   secretReference?: string;
   enabled?: boolean;
+  /** Shown instead of the provider name, e.g. which Uber store a connection is. */
+  displayName?: string;
 };
 
 export type ExternalMappingInput = {

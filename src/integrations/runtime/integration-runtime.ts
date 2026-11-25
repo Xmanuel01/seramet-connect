@@ -1,3 +1,4 @@
+import { storeMenuCatalog } from "@/integrations/marketplace/store-menu";
 import type { ProviderRegistry } from "@/integrations/provider-registry";
 import type { CredentialResolver } from "@/integrations/runtime/credential-resolver";
 import { IntegrationEventStore } from "@/integrations/runtime/event-store";
@@ -2154,7 +2155,11 @@ export class IntegrationRuntime {
       state: await this.dependencies.transactions.loadState(tenantId),
       mappings,
       externalStoreId: store.externalId,
-      catalog: await this.dependencies.catalog(tenantId, connection.branchId),
+      // A store sells only the items chosen for it (one branch can run several storefronts).
+      catalog: storeMenuCatalog(
+        await this.dependencies.catalog(tenantId, connection.branchId),
+        connection.configuration,
+      ),
       channel: this.dependencies.configuration
         .listOrderChannels(tenantId)
         .find(
@@ -2203,6 +2208,38 @@ export class IntegrationRuntime {
       throw new IntegrationValidationError("Marketplace connection is disabled or not configured");
   }
 
+  /**
+   * The marketplace confirmed or withdrew Seramet as the store's integration (Uber's
+   * store.provisioned / store.deprovisioned). Withdrawal retires the store mapping so the branch
+   * shows as unlinked instead of silently waiting for orders that will no longer come.
+   */
+  private async processStoreLifecycle(
+    event: IntegrationEvent,
+    parsed: ParsedProviderEvent,
+    connection: IntegrationConnection,
+  ) {
+    const storeId = parsed.externalStoreId ?? parsed.externalResourceId;
+    const mapping = (
+      await this.dependencies.repository.listMappings(event.tenantId, connection.id)
+    ).find(
+      (row) =>
+        row.resourceType === "STORE" && row.externalId.toLowerCase() === storeId?.toLowerCase(),
+    );
+    if (!mapping) return { ignored: true, reason: "store not mapped" };
+    const connected = parsed.eventType === "STORE_CONNECTED";
+    const at = parsed.occurredAt ?? new Date().toISOString();
+    await this.dependencies.repository.upsertMapping({
+      ...mapping,
+      ...(connected ? {} : { status: "DISABLED" as const }),
+      metadata: {
+        ...mapping.metadata,
+        providerLink: { state: connected ? "PROVISIONED" : "DEPROVISIONED", at, eventId: event.id },
+      },
+      updatedAt: new Date().toISOString(),
+    });
+    return { store: connected ? "PROVISIONED" : "DEPROVISIONED", mappingId: mapping.id };
+  }
+
   private async processEvent(
     event: IntegrationEvent,
     parsed: ParsedProviderEvent,
@@ -2230,6 +2267,11 @@ export class IntegrationRuntime {
       result = await this.processIncomingOrderCancellation(event, parsed, connection);
     } else if (parsed.eventType === "PAYMENT_CONFIRMED" || parsed.eventType === "PAYMENT_FAILED") {
       result = await this.processPaymentEvent(event, parsed, connection, adapter, credentials);
+    } else if (
+      parsed.eventType === "STORE_CONNECTED" ||
+      parsed.eventType === "STORE_DISCONNECTED"
+    ) {
+      result = await this.processStoreLifecycle(event, parsed, connection);
     }
     await this.events.updateStatus(event.tenantId, event.id, {
       status: "PROCESSED",

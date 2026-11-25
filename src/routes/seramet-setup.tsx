@@ -29,6 +29,7 @@ import type {
 import { setupSections } from "@/onboarding/types";
 import { SetupStageIcon, SetupStatus, SetupTab } from "@/onboarding/ui";
 import { useSetupCentre } from "@/onboarding/use-setup-centre";
+import { UberEatsConnect } from "@/components/app/UberEatsConnect";
 import { MpesaConnect, MpesaNotificationsButton } from "@/components/app/MpesaConnect";
 import { OnboardingWizard } from "@/onboarding/OnboardingWizard";
 import { ONBOARDING_RESUME_BELOW_BPS } from "@/onboarding/onboarding-steps";
@@ -1544,21 +1545,7 @@ function ProviderPanel({
   const integrations = centre.integrations.filter(
     (item) => item.category === category && item.providerId === "provider-daraja",
   );
-  if (category !== "PAYMENT") {
-    return (
-      <Panel>
-        <PanelHead
-          title="Delivery integrations"
-          sub="Unavailable during the controlled pilot"
-          right={<Link2 className="h-4 w-4 text-muted-foreground" />}
-        />
-        <p className="p-4 text-[13px] text-muted-foreground">
-          Delivery providers are disabled until their credentials, webhooks, reconciliation and
-          failure recovery have completed staging certification.
-        </p>
-      </Panel>
-    );
-  }
+  if (category !== "PAYMENT") return <UberEatsConnect centre={centre} />;
   const branchName = (id?: string) =>
     id ? (centre.structure.branches.find((item) => item.id === id)?.name ?? id) : "All branches";
   return (
