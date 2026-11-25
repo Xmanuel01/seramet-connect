@@ -311,6 +311,88 @@ export async function provisionUberStore(input: {
   }
 }
 
+/**
+ * After activation, turns on what Seramet needs from the store: order fulfilment webhooks,
+ * scheduled-order and order-release notifications (webhook version 1.0.0) and customers'
+ * special instructions. Uber's Update Integration Config takes the app's own token (eats.store),
+ * so it is a separate step: a refusal here leaves the store linked and is reported.
+ */
+export async function configureUberStoreIntegration(input: {
+  fetch: FetchLike;
+  environment: UberEnvironment;
+  clientId: string;
+  clientSecret: string;
+  storeId: string;
+}) {
+  const tokenResponse = await callUber(
+    input.fetch,
+    `${uberLoginBaseUrls[input.environment]}/oauth/v2/token`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: input.clientId,
+        client_secret: input.clientSecret,
+        grant_type: "client_credentials",
+        scope: "eats.store",
+      }).toString(),
+    },
+  );
+  const token = parseJson<{ access_token?: string }>(await tokenResponse.text())?.access_token;
+  if (!tokenResponse.ok || !token)
+    throw new UberLinkError(`Uber did not issue the app token (HTTP ${tokenResponse.status})`);
+  const response = await callUber(
+    input.fetch,
+    `${uberApiBaseUrls[input.environment]}/v1/eats/stores/${encodeURIComponent(input.storeId)}/pos_data`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        integration_enabled: true,
+        allowed_customer_requests: {
+          allow_single_use_items_requests: false,
+          allow_special_instruction_requests: true,
+        },
+        webhooks_config: {
+          order_release_webhooks: { is_enabled: true },
+          schedule_order_webhooks: { is_enabled: true },
+          webhooks_version: "1.0.0",
+        },
+      }),
+    },
+  );
+  if (!response.ok) {
+    const detail = parseJson<{ message?: string }>(await response.text())?.message;
+    console.warn(
+      JSON.stringify({
+        event: "uber_store_settings_refused",
+        environment: input.environment,
+        status: response.status,
+        message: detail ?? null,
+      }),
+    );
+    throw new UberLinkError(
+      `Uber did not apply the order settings (HTTP ${response.status})${detail ? `: ${detail}` : ""}`,
+    );
+  }
+}
+
+/** Undoes an activation Seramet could not finish saving, so Uber does not wait on Seramet. */
+export async function deprovisionUberStore(input: {
+  fetch: FetchLike;
+  environment: UberEnvironment;
+  accessToken: string;
+  storeId: string;
+}) {
+  const response = await callUber(
+    input.fetch,
+    `${uberApiBaseUrls[input.environment]}/v1/eats/stores/${encodeURIComponent(input.storeId)}/pos_data`,
+    { method: "DELETE", headers: { Authorization: `Bearer ${input.accessToken}` } },
+  );
+  if (!response.ok)
+    throw new UberLinkError(`Uber did not undo the activation (HTTP ${response.status})`);
+}
+
 /** Uber signs each webhook with the app's client secret: lowercase hex HMAC-SHA256 of the body. */
 export async function verifyUberSignature(rawBody: Uint8Array, signature: string, secret: string) {
   if (!/^[a-f0-9]{64}$/i.test(signature)) return false;

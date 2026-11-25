@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  configureUberStoreIntegration,
+  deprovisionUberStore,
   listUberStores,
   openUberLinkTicket,
   provisionUberStore,
@@ -205,6 +207,57 @@ describe("Uber Eats store link", () => {
         accessToken: "merchant",
       }),
     ).resolves.toEqual([{ storeId: "store-3", name: "Third" }]);
+  });
+
+  it("switches on order settings with the app's own token after activation", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetch = async (url: string, init?: RequestInit) => {
+      calls.push({ url, ...(init ? { init } : {}) });
+      return url.endsWith("/oauth/v2/token")
+        ? new Response(JSON.stringify({ access_token: "app-token" }))
+        : new Response(null, { status: 204 });
+    };
+    await configureUberStoreIntegration({
+      fetch,
+      environment: "SANDBOX",
+      clientId: "test-id",
+      clientSecret: "test-secret",
+      storeId: "store-1",
+    });
+    expect(calls[0]!.url).toBe("https://sandbox-login.uber.com/oauth/v2/token");
+    expect(String(calls[0]!.init?.body)).toContain("scope=eats.store");
+    expect(calls[1]!.url).toBe("https://test-api.uber.com/v1/eats/stores/store-1/pos_data");
+    expect(calls[1]!.init?.method).toBe("PATCH");
+    expect(new Headers(calls[1]!.init?.headers).get("Authorization")).toBe("Bearer app-token");
+    expect(JSON.parse(String(calls[1]!.init?.body))).toEqual({
+      integration_enabled: true,
+      allowed_customer_requests: {
+        allow_single_use_items_requests: false,
+        allow_special_instruction_requests: true,
+      },
+      webhooks_config: {
+        order_release_webhooks: { is_enabled: true },
+        schedule_order_webhooks: { is_enabled: true },
+        webhooks_version: "1.0.0",
+      },
+    });
+  });
+
+  it("undoes an activation with the merchant token", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    await deprovisionUberStore({
+      fetch: async (url, init) => {
+        calls.push({ url, ...(init ? { init } : {}) });
+        return new Response(null, { status: 204 });
+      },
+      environment: "SANDBOX",
+      accessToken: "merchant",
+      storeId: "store-1",
+    });
+    expect(calls[0]).toMatchObject({
+      url: "https://test-api.uber.com/v1/eats/stores/store-1/pos_data",
+      init: { method: "DELETE" },
+    });
   });
 
   it("reports Uber's refusal to activate a store", async () => {
