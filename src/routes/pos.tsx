@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { deliverySettings, type DeliveryCharge } from "@/delivery/delivery-charge";
 import { DeliveryChargeFields } from "@/delivery/DeliveryChargeFields";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   CheckCircle2,
   Clock,
@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { OrderIsland, type OrderIslandNotice } from "@/components/app/OrderIsland";
+import { PanelResizeHandle } from "@/components/app/PanelResizeHandle";
+import { usePanelWidth } from "@/hooks/use-panel-width";
 import { PosCustomerPicker } from "@/components/app/PosCustomerPicker";
 import { orderChannelDispatchError } from "@/orders/order-channel-service";
 import { UpcomingScheduledOrders } from "@/components/app/UpcomingScheduledOrders";
@@ -218,6 +220,9 @@ function POS() {
   );
   const hydratedOrderIdRef = useRef<string | null>(null);
   const orderActionRef = useRef(false);
+  // Desktop panel widths: the category rail and the order panel can be dragged wider or narrower.
+  const categoryPanel = usePanelWidth("seramet.pos.categoryWidth", 132, 96, 320);
+  const orderPanel = usePanelWidth("seramet.pos.orderWidth", 360, 300, 640);
   // True once the server has accepted the kitchen order, so a later print failure is
   // reported as "saved, not printed" rather than "not placed" (which invites a duplicate).
   const kitchenOrderAcceptedRef = useRef(false);
@@ -245,6 +250,7 @@ function POS() {
   const [deliveryPhone, setDeliveryPhone] = useState("");
   const [doorNumber, setDoorNumber] = useState("");
   const [deliveryCharge, setDeliveryCharge] = useState<DeliveryCharge>();
+  const deliveryAmountInput = useRef<HTMLInputElement>(null);
   // A delivery-app order typed in by hand: the app's number and any part due on delivery.
   const [appOrderNumber, setAppOrderNumber] = useState("");
   const [dueOnDelivery, setDueOnDelivery] = useState("");
@@ -756,11 +762,13 @@ function POS() {
   const orderBlocked = checkingPrices || missingLines.length > 0;
   // Checked again when an action runs, since a dialog may have been opened before.
   const orderBlockedReason = () =>
-    checkingPrices
-      ? "Checking the latest prices. Try again in a moment."
-      : missingLines.length
-        ? `${missingLines.map((line) => line.name).join(", ")} is no longer on the menu. Remove it first.`
-        : null;
+    deliveryAmountInput.current && !deliveryAmountInput.current.checkValidity()
+      ? "Enter a valid delivery amount before saving the order."
+      : checkingPrices
+        ? "Checking the latest prices. Try again in a moment."
+        : missingLines.length
+          ? `${missingLines.map((line) => line.name).join(", ")} is no longer on the menu. Remove it first.`
+          : null;
   const taxTotals = items.reduce(
     (totals, line) => {
       const rule = line.p.taxRuleId ? pricingRules.get(line.p.taxRuleId) : undefined;
@@ -1569,7 +1577,35 @@ function POS() {
             )}
           </div>
         )}
-        <div className="grid gap-0 lg:min-h-0 lg:flex-1 lg:grid-cols-[132px_minmax(0,1fr)_360px]">
+        <div
+          className="relative grid gap-0 lg:min-h-0 lg:flex-1 lg:grid-cols-[var(--pos-category-track)_minmax(0,1fr)_var(--pos-order-track)]"
+          style={
+            {
+              "--pos-category-width": `${categoryPanel.width}px`,
+              "--pos-order-width": `${orderPanel.width}px`,
+              // Whatever the saved widths, the menu keeps at least 280px and the order
+              // panel at least 300px, so nothing is pushed off a narrow desktop screen.
+              "--pos-category-track":
+                "max(96px, min(var(--pos-category-width), calc(100% - 280px - 300px)))",
+              "--pos-order-track":
+                "max(300px, min(var(--pos-order-width), calc(100% - var(--pos-category-track) - 280px)))",
+            } as CSSProperties
+          }
+        >
+          <PanelResizeHandle
+            label="Resize categories"
+            side="left"
+            panel={categoryPanel}
+            className="hidden lg:block"
+            style={{ left: "var(--pos-category-track)" }}
+          />
+          <PanelResizeHandle
+            label="Resize order panel"
+            side="right"
+            panel={orderPanel}
+            className="hidden lg:block"
+            style={{ left: "calc(100% - var(--pos-order-track))" }}
+          />
           <nav className="flex gap-1.5 overflow-x-auto border-b border-border bg-card p-2 lg:h-full lg:flex-col lg:overflow-y-auto lg:border-b-0 lg:border-r">
             {posCategories.map((c) => (
               <button
@@ -1845,6 +1881,8 @@ function POS() {
             )}
             {configuredDelivery && (
               <DeliveryChargeFields
+                key={`${activeTenantId}:${branchId}:${selectedChannel?.id}:${activeOrder?.id ?? "new"}`}
+                inputRef={deliveryAmountInput}
                 settings={configuredDelivery}
                 branchId={branchId}
                 currency={tenant.defaultCurrency}
@@ -2124,6 +2162,14 @@ function POS() {
                   <dt>Subtotal</dt>
                   <dd className="num">{formatMoney(subtotal)}</dd>
                 </div>
+                {deliveryAmountMinor > 0 && (
+                  <div className="flex justify-between text-muted-foreground">
+                    <dt>Delivery</dt>
+                    <dd className="num">
+                      {formatMoney(majorFromMinor(deliveryAmountMinor, tenant.defaultCurrency))}
+                    </dd>
+                  </div>
+                )}
                 <div className="flex justify-between text-muted-foreground">
                   <dt>{taxLabel}</dt>
                   <dd className="num">{formatMoney(tax)}</dd>
@@ -2332,6 +2378,14 @@ function POS() {
                     <dt className="text-muted-foreground">Subtotal</dt>
                     <dd className="num font-semibold">{formatMoney(subtotal)}</dd>
                   </div>
+                  {deliveryAmountMinor > 0 && (
+                    <div className="flex justify-between">
+                      <dt>Delivery</dt>
+                      <dd className="num font-semibold">
+                        {formatMoney(majorFromMinor(deliveryAmountMinor, tenant.defaultCurrency))}
+                      </dd>
+                    </div>
+                  )}
                   <div className="flex justify-between">
                     <dt className="text-muted-foreground">{taxLabel}</dt>
                     <dd className="num font-semibold">{formatMoney(tax)}</dd>
@@ -2372,6 +2426,14 @@ function POS() {
                 <dt>Subtotal</dt>
                 <dd className="num">{formatMoney(subtotal)}</dd>
               </div>
+              {deliveryAmountMinor > 0 && (
+                <div className="flex justify-between text-muted-foreground">
+                  <dt>Delivery</dt>
+                  <dd className="num">
+                    {formatMoney(majorFromMinor(deliveryAmountMinor, tenant.defaultCurrency))}
+                  </dd>
+                </div>
+              )}
               <div className="flex justify-between text-muted-foreground">
                 <dt>{taxLabel}</dt>
                 <dd className="num">{formatMoney(tax)}</dd>

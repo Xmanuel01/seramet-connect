@@ -1,4 +1,5 @@
 import { mpesaDaySummary, type MpesaDaySummary } from "@/payments/mpesa-day-summary";
+import { deliveryDaySummary, type DeliveryDaySummary } from "@/delivery/delivery-day-summary";
 import type { ServerActor } from "@/lib/seramet-auth";
 import { normalizeTransactionState, type TransactionState } from "@/lib/transaction-engine";
 import { businessDateForTimestamp } from "@/lib/business-date";
@@ -85,6 +86,7 @@ export type DailyClosingReport = {
   voidedInvoiceIds: string[];
   mpesa?: MpesaDaySummary;
   marketplace?: MarketplaceDayRow[];
+  delivery?: DeliveryDaySummary;
   // Why M-Pesa payments not yet on a bill were carried over to the next day.
   mpesaCarryOverReason?: string;
 };
@@ -608,6 +610,14 @@ export function closeBusinessDay(
       timeZone: accounting.timeZone,
       cutoffMinutes: accounting.businessDayCutoffMinutes,
       supervisorId: actor.id,
+      delivery: deliveryDaySummary(next, {
+        tenantId: actor.tenantId,
+        branchId: actor.branchId,
+        businessDate: input.businessDate,
+        timeZone: accounting.timeZone,
+        cutoffMinutes: accounting.businessDayCutoffMinutes,
+        currency: accounting.tenant.defaultCurrency,
+      }),
       marketplace: marketplaceDaySummary(next, {
         tenantId: actor.tenantId,
         branchId: actor.branchId,
@@ -761,6 +771,14 @@ export function summarizeBusinessDay(
       timeZone: accounting.timeZone,
       cutoffMinutes: accounting.businessDayCutoffMinutes,
       supervisorId: "system",
+      delivery: deliveryDaySummary(next, {
+        tenantId: input.tenantId,
+        branchId: input.branchId,
+        businessDate: input.businessDate,
+        timeZone: accounting.timeZone,
+        cutoffMinutes: accounting.businessDayCutoffMinutes,
+        currency: accounting.tenant.defaultCurrency,
+      }),
       marketplace: marketplaceDaySummary(next, {
         tenantId: input.tenantId,
         branchId: input.branchId,

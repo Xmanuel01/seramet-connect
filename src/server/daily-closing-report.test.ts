@@ -73,6 +73,49 @@ async function evidence(name: string, pdf: Uint8Array) {
   await writeFile(resolve(directory, `${name}.pdf`), pdf);
 }
 describe("immutable closing PDF", () => {
+  it("freezes separate rider fees in closing reports and includes the delivery PDF page", async () => {
+    let state = TransactionEngine.createOrder(
+      createEmptyTransactionState(actor.tenantId),
+      {
+        tenantId: actor.tenantId,
+        branchId: actor.branchId,
+        branch: actor.branchId,
+        customer: "Delivery customer",
+        channel: "Own Delivery",
+        cashier: actor.name,
+        delivery: {
+          status: "ASSIGNED",
+          rider: "Test Rider",
+          charge: { amountMinor: 15000, source: "ORDER", beneficiary: "RIDER" },
+        },
+        lines: [{ id: "meal", name: "Meal", category: "Food", quantity: 1, unitPrice: 900 }],
+      },
+      "SERVED",
+    );
+    state = TransactionEngine.createOpenBill(state, state.orders[0]!.id);
+    state = closeBusinessDay(state, actor, {
+      businessDate: "2026-10-15",
+      drawerCounts: [],
+      confirmed: true,
+    });
+    const snapshot = state.paymentOperations!.dayCloses[0]!.snapshot!;
+    expect(snapshot.dailyReport!.delivery).toMatchObject({
+      chargedMinor: 15000,
+      riderPayableMinor: 15000,
+      businessRevenueMinor: 0,
+      riders: [{ name: "Test Rider", payableMinor: 15000 }],
+    });
+    expect(closingReportSections(snapshot).flatMap((section) => section.rows)).toContainEqual([
+      "Rider fee liability",
+      "KES\u00a0150.00",
+    ]);
+    const before = await renderDailyClosingPdf(snapshot);
+    expect((await PDFDocument.load(before)).getPageCount()).toBe(4);
+    state.orders[0]!.delivery!.charge!.amountMinor = 99000;
+    state.orders[0]!.delivery!.rider = "Changed Rider";
+    expect(await renderDailyClosingPdf(snapshot)).toEqual(before);
+    await evidence("delivery-fees", before);
+  });
   it("reports recorded components exactly, freezes source invoices and reproduces identical PDF bytes", async () => {
     let state = TransactionEngine.createOrder(
       createEmptyTransactionState(actor.tenantId),
