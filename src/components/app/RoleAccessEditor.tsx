@@ -75,10 +75,11 @@ export function RoleAccessEditor({
   );
 
   return (
-    <div className="grid gap-3">
-      <div className="rounded-lg border border-border p-3">
+    // minmax(0,1fr): truncated section summaries must not widen the column past the page.
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
+      <div className="min-w-0 rounded-lg border border-border p-3">
         <div className="text-[13px] font-bold">What {role.name} can do</div>
-        <p className="mt-1 text-[12px] text-muted-foreground">
+        <p className="mt-1 text-[12px] text-muted-foreground [overflow-wrap:anywhere]">
           {summary.can.length ? summary.can.join(", ") : "Nothing yet."}
           {summary.risky.length ? ` Also allowed to: ${summary.risky.join(", ")}.` : ""}
         </p>
@@ -127,8 +128,8 @@ export function RoleAccessEditor({
           action.permissions.some((code) => held.has(code)),
         );
         return (
-          <details key={section.key} className="group rounded-lg border border-border">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5">
+          <details key={section.key} className="group min-w-0 rounded-lg border border-border">
+            <summary className="flex min-w-0 cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5">
               <span className="min-w-0">
                 <span className="block text-[13px] font-semibold">{section.label}</span>
                 <span className="block truncate text-[11px] text-muted-foreground">

@@ -18,15 +18,18 @@ import {
 import { useEffect, useState, type FormEvent } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
+import { EtimsSettingsCard } from "@/components/app/EtimsSettingsCard";
 import type {
   DuplicateStrategy,
   ImportKind,
   ImportPreview,
   SetupSection,
+  SetupStage,
 } from "@/onboarding/types";
 import { setupSections } from "@/onboarding/types";
 import { SetupStageIcon, SetupStatus, SetupTab } from "@/onboarding/ui";
 import { useSetupCentre } from "@/onboarding/use-setup-centre";
+import { UberEatsConnect } from "@/components/app/UberEatsConnect";
 import { MpesaConnect, MpesaNotificationsButton } from "@/components/app/MpesaConnect";
 import { OnboardingWizard } from "@/onboarding/OnboardingWizard";
 import { ONBOARDING_RESUME_BELOW_BPS } from "@/onboarding/onboarding-steps";
@@ -181,8 +184,14 @@ function SetupCentre() {
     if (search.section) setSection(search.section);
   }, [search.section]);
 
-  const sectionStage = centre.setup?.stages.find((stage) => stage.section === section);
-  const sectionResults = centre.setup?.results.filter((result) => result.section === section) ?? [];
+  // Testing, Readiness and Go live are shown as one "Go live" step.
+  const view: SetupSection = LAUNCH_SECTIONS.includes(section) ? "GO_LIVE" : section;
+  const displayStages = mergeLaunchStages(centre.setup?.stages ?? []);
+  const sectionStage = displayStages.find((stage) => stage.section === view);
+  const sectionResults =
+    centre.setup?.results.filter((result) =>
+      view === "GO_LIVE" ? LAUNCH_SECTIONS.includes(result.section) : result.section === view,
+    ) ?? [];
   const blockers = centre.setup?.results.filter((result) => result.status === "BLOCKED") ?? [];
   const importKind = importSection[section];
   const score = ((centre.setup?.overallScoreBps ?? 0) / 100).toFixed(0);
@@ -526,10 +535,10 @@ function SetupCentre() {
       )}
       <div className="mt-4 overflow-x-auto border-b border-border xl:hidden">
         <div className="flex min-w-max">
-          {centre.setup?.stages.map((stage) => (
+          {displayStages.map((stage) => (
             <SetupTab
               key={stage.section}
-              active={section === stage.section}
+              active={view === stage.section}
               onClick={() => setSection(stage.section)}
             >
               {stage.label}
@@ -540,14 +549,14 @@ function SetupCentre() {
       <div className="mt-4 grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
         <Panel className="hidden self-start p-2 xl:block">
           <nav className="space-y-0.5">
-            {centre.setup?.stages.map((stage) => (
+            {displayStages.map((stage) => (
               <button
                 type="button"
                 key={stage.section}
                 onClick={() => setSection(stage.section)}
                 className={cn(
                   "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-[12px] font-semibold",
-                  section === stage.section
+                  view === stage.section
                     ? "bg-accent text-accent-foreground"
                     : "text-muted-foreground hover:bg-secondary hover:text-foreground",
                 )}
@@ -974,6 +983,7 @@ function SetupCentre() {
               </form>
             </Panel>
           )}
+          {section === "TAX_SERVICE" && <EtimsSettingsCard />}
           {(section === "PAYMENTS" || section === "DELIVERY_INTEGRATIONS") && (
             <>
               {section === "PAYMENTS" && (
@@ -1158,7 +1168,7 @@ function SetupCentre() {
               }
             />
           )}
-          {section === "TESTING" && (
+          {view === "GO_LIVE" && (
             <Panel>
               <PanelHead
                 title="Safe onboarding tests"
@@ -1199,7 +1209,7 @@ function SetupCentre() {
               </div>
             </Panel>
           )}
-          {section === "READINESS" && (
+          {view === "GO_LIVE" && (
             <>
               <Panel>
                 <PanelHead
@@ -1313,7 +1323,7 @@ function SetupCentre() {
               </Panel>
             </>
           )}
-          {section === "GO_LIVE" && (
+          {view === "GO_LIVE" && (
             <Panel>
               <PanelHead
                 title="Go-live control"
@@ -1535,21 +1545,7 @@ function ProviderPanel({
   const integrations = centre.integrations.filter(
     (item) => item.category === category && item.providerId === "provider-daraja",
   );
-  if (category !== "PAYMENT") {
-    return (
-      <Panel>
-        <PanelHead
-          title="Delivery integrations"
-          sub="Unavailable during the controlled pilot"
-          right={<Link2 className="h-4 w-4 text-muted-foreground" />}
-        />
-        <p className="p-4 text-[13px] text-muted-foreground">
-          Delivery providers are disabled until their credentials, webhooks, reconciliation and
-          failure recovery have completed staging certification.
-        </p>
-      </Panel>
-    );
-  }
+  if (category !== "PAYMENT") return <UberEatsConnect centre={centre} />;
   const branchName = (id?: string) =>
     id ? (centre.structure.branches.find((item) => item.id === id)?.name ?? id) : "All branches";
   return (
@@ -2090,4 +2086,60 @@ function setupCounts(blockers: number, warnings: number) {
     ...(warnings ? [`${warnings} to check`] : []),
   ];
   return parts.length ? parts.join(" · ") : "All set";
+}
+
+const LAUNCH_SECTIONS: SetupSection[] = ["TESTING", "READINESS", "GO_LIVE"];
+
+const READINESS_ORDER: SetupStage["readinessStatus"][] = [
+  "BLOCKED",
+  "WARNING",
+  "READY",
+  "NOT_APPLICABLE",
+];
+
+/**
+ * Show Testing, Readiness and Go live as a single "Go live" step. The server still
+ * scores them separately; the combined row uses their weighted progress and the
+ * most serious status among them, so a blocker in any of them still shows.
+ */
+function mergeLaunchStages(stages: SetupStage[]): SetupStage[] {
+  const launch = stages.filter((stage) => LAUNCH_SECTIONS.includes(stage.section));
+  if (launch.length === 0) return stages;
+  const weight = launch.reduce((sum, stage) => sum + Math.max(stage.weightBps, 0), 0);
+  const progressBps = weight
+    ? Math.round(
+        launch.reduce((sum, stage) => sum + stage.progressBps * Math.max(stage.weightBps, 0), 0) /
+          weight,
+      )
+    : Math.round(launch.reduce((sum, stage) => sum + stage.progressBps, 0) / launch.length);
+  const statuses = new Set(launch.map((stage) => stage.status));
+  const status: SetupStage["status"] = statuses.has("BLOCKED")
+    ? "BLOCKED"
+    : [...statuses].every((value) => value === "COMPLETE")
+      ? "COMPLETE"
+      : [...statuses].every((value) => value === "COMPLETE" || value === "READY")
+        ? "READY"
+        : [...statuses].every((value) => value === "NOT_STARTED")
+          ? "NOT_STARTED"
+          : "IN_PROGRESS";
+  const readinessStatus =
+    READINESS_ORDER.find((value) => launch.some((stage) => stage.readinessStatus === value)) ??
+    "NOT_APPLICABLE";
+  const merged: SetupStage = {
+    section: "GO_LIVE",
+    label: "Go live",
+    status,
+    readinessStatus,
+    progressBps,
+    weightBps: weight,
+    blockers: launch.reduce((sum, stage) => sum + stage.blockers, 0),
+    warnings: launch.reduce((sum, stage) => sum + stage.warnings, 0),
+    evidence: Object.assign({}, ...launch.map((stage) => stage.evidence)),
+  };
+  const result: SetupStage[] = [];
+  for (const stage of stages) {
+    if (!LAUNCH_SECTIONS.includes(stage.section)) result.push(stage);
+    else if (!result.includes(merged)) result.push(merged);
+  }
+  return result;
 }

@@ -36,6 +36,7 @@ import {
 } from "@/integrations/marketplace/operations-view";
 import { MarketplaceConnections } from "@/components/app/MarketplaceConnections";
 import { MarketplaceClosing } from "@/components/app/MarketplaceClosing";
+import { StoreMenuEditor } from "@/components/app/StoreMenuEditor";
 
 export const Route = createFileRoute("/marketplace")({
   head: () => ({
@@ -47,6 +48,9 @@ export const Route = createFileRoute("/marketplace")({
       },
     ],
   }),
+  // `store` opens one linked storefront (from its entry under Marketplace in the side menu).
+  validateSearch: (search: Record<string, unknown>): { store?: string } =>
+    typeof search["store"] === "string" && search["store"] ? { store: search["store"] } : {},
   component: MarketplaceControlCentre,
 });
 
@@ -93,8 +97,10 @@ function MarketplaceControlCentre() {
         ),
     [activeTenantId, branchId, configuration, providers],
   );
+  const { store: storeParam } = Route.useSearch();
+  const store = connections.find((connection) => connection.id === storeParam);
   const [tab, setTab] = useState<
-    "ORDERS" | "MENU_SYNC" | "RECONCILIATION" | "EXCEPTIONS" | "CONNECTIONS"
+    "ORDERS" | "STORE_MENU" | "MENU_SYNC" | "RECONCILIATION" | "EXCEPTIONS" | "CONNECTIONS"
   >("ORDERS");
   const [history, setHistory] = useState(false);
   const [search, setSearch] = useState("");
@@ -212,6 +218,18 @@ function MarketplaceControlCentre() {
   }, []);
 
   const connectionScopeKey = connections.map((connection) => connection.id).join("|");
+  // A store page works on that one storefront: its orders, menu and connection.
+  useEffect(() => {
+    if (!store) {
+      setProviderFilter("ALL");
+      setTab((current) => (current === "STORE_MENU" ? "ORDERS" : current));
+      return;
+    }
+    setSelectedConnectionId(store.id);
+    setProviderFilter(store.id);
+    setPreview(null);
+    setPreviewMenu(null);
+  }, [store]);
   useEffect(() => {
     if (connections.some((connection) => connection.id === selectedConnectionId)) return;
     setSelectedConnectionId(connections[0]?.id ?? "");
@@ -477,8 +495,8 @@ function MarketplaceControlCentre() {
 
   return (
     <AppShell
-      title="Marketplace"
-      subtitle={branchLabel}
+      title={store ? store.displayName : "Marketplace"}
+      subtitle={store ? `${branchLabel} · Marketplace store` : branchLabel}
       actions={
         <Btn onClick={() => void loadDiagnostics()} disabled={working}>
           <RefreshCw className="h-4 w-4" /> Refresh
@@ -511,8 +529,18 @@ function MarketplaceControlCentre() {
       </div>
 
       <div className="mt-4 flex gap-1 overflow-x-auto border-b border-border pb-2">
-        {(["ORDERS", "MENU_SYNC", "RECONCILIATION", "EXCEPTIONS", "CONNECTIONS"] as const)
+        {(
+          [
+            "ORDERS",
+            "STORE_MENU",
+            "MENU_SYNC",
+            "RECONCILIATION",
+            "EXCEPTIONS",
+            "CONNECTIONS",
+          ] as const
+        )
           .filter((item) => item !== "RECONCILIATION" || hasPermission(permissions.financeView))
+          .filter((item) => item !== "STORE_MENU" || Boolean(store))
           .map((item) => (
             <button
               key={item}
@@ -522,6 +550,7 @@ function MarketplaceControlCentre() {
               {
                 {
                   ORDERS: "Orders",
+                  STORE_MENU: "Store menu",
                   MENU_SYNC: "Menu",
                   RECONCILIATION: "Daily closing",
                   EXCEPTIONS: "Needs attention",
@@ -531,6 +560,16 @@ function MarketplaceControlCentre() {
             </button>
           ))}
       </div>
+
+      {tab === "STORE_MENU" && store && (
+        <StoreMenuEditor
+          connectionId={store.id}
+          storeName={store.displayName}
+          headers={headers}
+          currency={currency}
+          canEdit={hasPermission(permissions.integrationsMenuSync)}
+        />
+      )}
 
       {tab === "ORDERS" && (
         <>

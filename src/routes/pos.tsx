@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { deliverySettings, type DeliveryCharge } from "@/delivery/delivery-charge";
 import { DeliveryChargeFields } from "@/delivery/DeliveryChargeFields";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Clock,
@@ -16,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
+import { OrderIsland, type OrderIslandNotice } from "@/components/app/OrderIsland";
 import { PosCustomerPicker } from "@/components/app/PosCustomerPicker";
 import { orderChannelDispatchError } from "@/orders/order-channel-service";
 import { UpcomingScheduledOrders } from "@/components/app/UpcomingScheduledOrders";
@@ -217,6 +218,22 @@ function POS() {
   );
   const hydratedOrderIdRef = useRef<string | null>(null);
   const orderActionRef = useRef(false);
+  // True once the server has accepted the kitchen order, so a later print failure is
+  // reported as "saved, not printed" rather than "not placed" (which invites a duplicate).
+  const kitchenOrderAcceptedRef = useRef(false);
+  const [orderIsland, setOrderIsland] = useState<OrderIslandNotice | null>(null);
+  const dismissOrderIsland = useCallback(() => setOrderIsland(null), []);
+  const showOrderIsland = (
+    kind: OrderIslandNotice["kind"],
+    detail?: string,
+    linkToPrinters = kind !== "placed",
+  ) =>
+    setOrderIsland((current) => ({
+      id: (current?.id ?? 0) + 1,
+      kind,
+      linkToPrinters,
+      ...(detail ? { detail } : {}),
+    }));
   // Bridge callbacks may complete out of order. Persist their acknowledgements
   // sequentially; failure leaves an inspectable CLAIMED obligation on the server.
   const kotAcknowledgeRef = useRef<Promise<void>>(Promise.resolve());
@@ -832,6 +849,9 @@ function POS() {
     cashier: currentUser.name,
     waiter: currentUser.name,
     createdAt: activeOrder?.createdAt ?? new Date().toISOString(),
+    taxRatesBps: operationalMenu.pricingRules
+      .filter((rule) => rule.rule_type === "TAX")
+      .map((rule) => rule.rate_bps),
     customer:
       linkedCustomer?.displayName ??
       (isOnlineSource
@@ -1023,6 +1043,7 @@ function POS() {
     });
 
   const queueKitchenTicketsForTable = async (tableNo = orderTable) => {
+    kitchenOrderAcceptedRef.current = false;
     if (!items.length) return null;
     const blocked = orderBlockedReason();
     if (blocked) throw new Error(blocked);
@@ -1111,6 +1132,7 @@ function POS() {
       draft,
       ...(appOrder ? { appOrder } : {}),
     });
+    kitchenOrderAcceptedRef.current = true;
     if (resultState && "offline" in resultState && resultState.offline) {
       throw new Error(
         "Kitchen command is queued for offline reconciliation. No authoritative " +
@@ -1327,36 +1349,32 @@ function POS() {
       if (!items.length) return;
       if (selectedChannel?.requiresTable && !orderTable) {
         setTablePickerOpen(true);
-        setPrintNotice("Choose a table before sending this order to the kitchen.");
-        setPrintNoticeType("warning");
+        showOrderIsland("failed", "Choose a table first", false);
         return;
       }
       try {
         const result = await queueKitchenTicketsForTable();
         if (!result) return;
         if ("bypassed" in result && result.bypassed) {
-          clearCurrentOrder(
-            `${result.order.id} sent to the kitchen and saved in Orders. Printer bypass is on, so no ticket was printed.`,
-            "warning",
-          );
+          clearCurrentOrder(IDLE_PRINT_NOTICE);
+          showOrderIsland("saved", `${result.order.id} · printer bypass is on`);
           return;
         }
         const dispatched = kitchenDispatchHasDelivery(result);
+        clearCurrentOrder(IDLE_PRINT_NOTICE);
         if (dispatched) {
-          const notice = result.printResult?.jobs.length
-            ? `${result.order.id} sent to the kitchen and saved in Orders.`
-            : `${result.order.id} is already in kitchen; no new KOT is required.`;
-          clearCurrentOrder(notice, "success");
+          showOrderIsland("placed", result.order.id);
         } else {
           // The order is safe in Orders either way; only the ticket needs checking.
-          clearCurrentOrder(
-            `${result.order.id} is in Orders, but its kitchen ticket isn't confirmed. Check it in Printers.`,
-            "warning",
-          );
+          showOrderIsland("saved", `${result.order.id} · check the ticket in Printers`);
         }
       } catch (error) {
-        setPrintNotice(cashierErrorMessage(error, "The kitchen order could not be sent."));
-        setPrintNoticeType("warning");
+        if (kitchenOrderAcceptedRef.current) {
+          showOrderIsland("saved", "In Orders · check the ticket in Printers");
+        } else {
+          const reason = kitchenFailureReason(error);
+          showOrderIsland("failed", reason.text, reason.printer);
+        }
       }
     });
 
@@ -2170,6 +2188,7 @@ function POS() {
             </div>
           </aside>
         </div>
+        <OrderIsland notice={orderIsland} onDismiss={dismissOrderIsland} />
         {printToastOpen && printNotice !== IDLE_PRINT_NOTICE && (
           <div
             role="status"
@@ -2437,6 +2456,25 @@ function PosClock({ locale, timeZone }: { locale: string; timeZone: string }) {
 
 // Placeholder shown before any action; the status box stays hidden until there is news.
 const IDLE_PRINT_NOTICE = "Print routing is running in the background.";
+
+const NO_PRINT_ROUTE = "Kitchen dispatch requires a configured printer/KDS route";
+
+/**
+ * Printer and routing problems become a few words that link to Printers & Devices.
+ * Anything else (a missing delivery address, a required customer, a server rejection)
+ * is shown as the cashier's own message, so they know what to fix.
+ */
+function kitchenFailureReason(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  if (message.startsWith(NO_PRINT_ROUTE))
+    return { text: "No printer set up for this till", printer: true };
+  if (message.startsWith("Kitchen routing is unavailable"))
+    return { text: "No kitchen route set up", printer: true };
+  return {
+    text: cashierErrorMessage(error, "The kitchen order could not be sent."),
+    printer: false,
+  };
+}
 
 function cashierErrorMessage(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message : fallback;

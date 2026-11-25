@@ -34,9 +34,19 @@ const CP437 = {
 const NO_SPACING = [ESC, 0x33, 0];
 const DEFAULT_SPACING = [ESC, 0x32];
 
+// Headings of the approved KOT, BOT, invoice and receipt layouts. Text mode
+// only: raster layouts keep printing-core's isStrongLine, which the server and
+// every installed bridge must agree on for the document integrity check.
+const APPROVED_HEADINGS =
+  /^(INVOICE|GENERAL INSTRUCTIONS|END OF (KITCHEN|BAR) ORDER|PAYMENT DETAILS|eTIMS VERIFY|THANK YOU FOR YOUR BUSINESS|RECEIPT\s+\[ PAID \]|(NEW ORDER|ADDED ITEMS|CANCELLED)\s+(KITCHEN|BAR))$/;
+
 export function isStrongText(line, index) {
+  const text = line.trim();
   return (
     index === 0 ||
+    APPROVED_HEADINGS.test(text) ||
+    /^(ORDER #|GRAND TOTAL\s)/.test(text) ||
+    /^\d+(\.\d+)? x \S/.test(line) ||
     /^(BILL|RECEIPT|TAX INVOICE|PAID|DUPLICATE COPY)$/.test(line.trim()) ||
     /^(KITCHEN ORDER|BAR ORDER|KDS ORDER|KOT #|BAR #)/.test(line.trim()) ||
     /^\|\s*TOTAL\s*\|/.test(line) ||

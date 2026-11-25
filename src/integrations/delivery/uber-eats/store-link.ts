@@ -1,0 +1,480 @@
+/**
+ * Linking a restaurant's Uber Eats store to Seramet.
+ *
+ * Seramet is one Uber developer app for every restaurant: the app's client credentials are
+ * platform secrets, and each restaurant only signs in to Uber once to let Seramet manage its
+ * store (Uber's `eats.pos_provisioning` authorization-code grant). Uber then sends every
+ * store's webhooks to the app's single webhook URL, signed with the app's client secret, and
+ * Seramet routes them to the restaurant whose connection maps that Uber store id.
+ */
+
+export type UberEnvironment = "SANDBOX" | "PRODUCTION";
+
+export type UberPlatformEnv = {
+  SERAMET_UBER_CLIENT_ID?: string;
+  SERAMET_UBER_CLIENT_SECRET?: string;
+  SERAMET_UBER_SANDBOX_CLIENT_ID?: string;
+  SERAMET_UBER_SANDBOX_CLIENT_SECRET?: string;
+  SERAMET_UBER_WEBHOOK_SIGNING_SECRET?: string;
+  SERAMET_UBER_SANDBOX_WEBHOOK_SIGNING_SECRET?: string;
+};
+
+export const uberLoginBaseUrls: Record<UberEnvironment, string> = {
+  SANDBOX: "https://sandbox-login.uber.com",
+  PRODUCTION: "https://auth.uber.com",
+};
+export const uberApiBaseUrls: Record<UberEnvironment, string> = {
+  SANDBOX: "https://test-api.uber.com",
+  PRODUCTION: "https://api.uber.com",
+};
+
+export const uberProvisioningScope = "eats.pos_provisioning";
+export const uberWebhookPath = "/api/seramet/integrations/webhooks/UBER_EATS";
+export const uberCallbackPath = "/api/seramet/integrations/uber-eats/callback";
+/** The browser lands here after Uber sign-in; the sealed ticket travels in the URL fragment. */
+export const uberLinkReturnPath = "/seramet-setup";
+const linkLifetimeMs = 15 * 60_000;
+/** A stalled Uber call fails the setup step with a retryable message instead of hanging. */
+const uberRequestTimeoutMs = 15_000;
+
+/** Connections linked through the platform app read its credentials, never a restaurant secret. */
+export function uberPlatformSecretReference(environment: UberEnvironment) {
+  return `platform://uber-eats/${environment.toLowerCase()}`;
+}
+
+export function uberPlatformCredentials(env: UberPlatformEnv, environment: UberEnvironment) {
+  const clientId =
+    environment === "SANDBOX" ? env.SERAMET_UBER_SANDBOX_CLIENT_ID : env.SERAMET_UBER_CLIENT_ID;
+  const clientSecret =
+    environment === "SANDBOX"
+      ? env.SERAMET_UBER_SANDBOX_CLIENT_SECRET
+      : env.SERAMET_UBER_CLIENT_SECRET;
+  if (!clientId?.trim() || !clientSecret?.trim()) return undefined;
+  // The dashboard's "Basic HMAC" webhook setting signs with its own key; without one, Uber
+  // signs with the client secret.
+  const signingKey = (
+    environment === "SANDBOX"
+      ? env.SERAMET_UBER_SANDBOX_WEBHOOK_SIGNING_SECRET
+      : env.SERAMET_UBER_WEBHOOK_SIGNING_SECRET
+  )?.trim();
+  return {
+    clientId: clientId.trim(),
+    clientSecret: clientSecret.trim(),
+    webhookSigningSecret: signingKey || clientSecret.trim(),
+  };
+}
+
+export function uberAuthorizeUrl(input: {
+  environment: UberEnvironment;
+  clientId: string;
+  redirectUri: string;
+  state: string;
+}) {
+  const url = new URL("/oauth/v2/authorize", uberLoginBaseUrls[input.environment]);
+  url.searchParams.set("client_id", input.clientId);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("redirect_uri", input.redirectUri);
+  url.searchParams.set("scope", uberProvisioningScope);
+  url.searchParams.set("state", input.state);
+  return url.toString();
+}
+
+export type UberLinkState = {
+  tenantId: string;
+  branchId: string;
+  actorId: string;
+  environment: UberEnvironment;
+  orderChannelId?: string;
+  expiresAt: number;
+};
+
+export type UberStoreChoice = { storeId: string; name: string; address?: string };
+
+export type UberLinkTicket = UberLinkState & {
+  merchantAccessToken: string;
+  stores: UberStoreChoice[];
+};
+
+/** A short-lived, signed state so Uber's redirect can only finish a link Seramet started. */
+export async function signUberLinkState(
+  state: Omit<UberLinkState, "expiresAt">,
+  secret: string,
+  now = Date.now(),
+) {
+  const body = toBase64Url(
+    new TextEncoder().encode(JSON.stringify({ ...state, expiresAt: now + linkLifetimeMs })),
+  );
+  return `${body}.${toBase64Url(await hmac(secret, `uber-link-state:${body}`))}`;
+}
+
+export async function verifyUberLinkState(token: string, secret: string, now = Date.now()) {
+  const [body, signature, extra] = token.split(".");
+  if (!body || !signature || extra !== undefined) return undefined;
+  const expected = toBase64Url(await hmac(secret, `uber-link-state:${body}`));
+  if (!constantTimeEqual(expected, signature)) return undefined;
+  const state = parseJson<UberLinkState>(new TextDecoder().decode(fromBase64Url(body)));
+  if (!state || !isLinkState(state) || state.expiresAt < now) return undefined;
+  return state;
+}
+
+/**
+ * Seals the merchant's Uber token and store list for the store-choice step. The ticket travels
+ * only in the URL fragment, which browsers never send to a server, and expires with the state.
+ */
+export async function sealUberLinkTicket(ticket: UberLinkTicket, secret: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const sealed = new Uint8Array(
+    await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      await ticketKey(secret),
+      new TextEncoder().encode(JSON.stringify(ticket)),
+    ),
+  );
+  const joined = new Uint8Array(iv.length + sealed.length);
+  joined.set(iv);
+  joined.set(sealed, iv.length);
+  return toBase64Url(joined);
+}
+
+export async function openUberLinkTicket(sealed: string, secret: string, now = Date.now()) {
+  try {
+    const bytes = fromBase64Url(sealed);
+    if (bytes.length < 29) return undefined;
+    const plain = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: bytes.slice(0, 12) },
+      await ticketKey(secret),
+      bytes.slice(12),
+    );
+    const ticket = parseJson<UberLinkTicket>(new TextDecoder().decode(plain));
+    if (
+      !ticket ||
+      !isLinkState(ticket) ||
+      ticket.expiresAt < now ||
+      typeof ticket.merchantAccessToken !== "string" ||
+      !Array.isArray(ticket.stores)
+    )
+      return undefined;
+    return ticket;
+  } catch {
+    return undefined;
+  }
+}
+
+type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+
+/** Network failures and timeouts reach the owner as a retryable Uber error. */
+async function callUber(fetcher: FetchLike, url: string, init: RequestInit) {
+  try {
+    return await fetcher(url, { ...init, signal: AbortSignal.timeout(uberRequestTimeoutMs) });
+  } catch {
+    throw new UberLinkError("Uber did not respond in time. Try again in a moment.");
+  }
+}
+
+export async function exchangeUberAuthorizationCode(input: {
+  fetch: FetchLike;
+  environment: UberEnvironment;
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  code: string;
+}) {
+  const response = await callUber(
+    input.fetch,
+    `${uberLoginBaseUrls[input.environment]}/oauth/v2/token`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: input.clientId,
+        client_secret: input.clientSecret,
+        grant_type: "authorization_code",
+        redirect_uri: input.redirectUri,
+        code: input.code,
+      }).toString(),
+    },
+  );
+  const body = parseJson<{ access_token?: string; scope?: string }>(await response.text());
+  if (!response.ok || !body?.access_token)
+    throw new UberLinkError(`Uber sign-in could not be completed (HTTP ${response.status})`);
+  const scopes = body.scope?.split(/\s+/).filter(Boolean) ?? [];
+  // Scope names only: shows whether Uber actually granted provisioning to this sign-in.
+  console.info(
+    JSON.stringify({ event: "uber_sign_in_token", environment: input.environment, scopes }),
+  );
+  if (body.scope !== undefined && !scopes.includes(uberProvisioningScope))
+    throw new UberLinkError(
+      `Uber did not grant ${uberProvisioningScope} to Seramet for this sign-in; ask Uber to enable it for the app`,
+    );
+  return body.access_token;
+}
+
+export async function listUberStores(input: {
+  fetch: FetchLike;
+  environment: UberEnvironment;
+  accessToken: string;
+}): Promise<UberStoreChoice[]> {
+  const response = await callUber(
+    input.fetch,
+    `${uberApiBaseUrls[input.environment]}/v1/eats/stores`,
+    {
+      headers: { Authorization: `Bearer ${input.accessToken}` },
+    },
+  );
+  const body = parseJson<Record<string, unknown>>(await response.text());
+  if (!response.ok)
+    throw new UberLinkError(
+      `Uber did not list the stores for this account (HTTP ${response.status})`,
+    );
+  // The Store API has answered as `stores[].store_id` and as `data[].id`; accept either.
+  const lists = [body?.["stores"], body?.["data"], body?.["results"]].filter(Array.isArray);
+  // An empty list under one key must not hide stores listed under another.
+  const rows: unknown[] = lists.find((list) => list.length > 0) ?? [];
+  const stores = (rows as unknown[]).flatMap((entry) => {
+    const store = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
+    const storeId = [store["store_id"], store["id"]].find(
+      (value): value is string => typeof value === "string" && Boolean(value.trim()),
+    );
+    if (!storeId) return [];
+    const location =
+      store["location"] && typeof store["location"] === "object"
+        ? (store["location"] as Record<string, unknown>)
+        : {};
+    const address = [location["address"], location["street_address"], location["city"]]
+      .filter((part): part is string => typeof part === "string" && Boolean(part.trim()))
+      .join(", ");
+    return [
+      {
+        storeId,
+        name: typeof store["name"] === "string" && store["name"] ? store["name"] : storeId,
+        ...(address ? { address } : {}),
+      },
+    ];
+  });
+  if (!stores.length)
+    // Field names and counts only, never values, to see what Uber sent for an empty list.
+    console.warn(
+      JSON.stringify({
+        event: "uber_store_list_empty",
+        environment: input.environment,
+        status: response.status,
+        keys: body ? Object.keys(body).slice(0, 12) : [],
+        rows: rows.length,
+      }),
+    );
+  return stores;
+}
+
+/** Makes Seramet the store's order manager so Uber sends its orders to the webhook. */
+export async function provisionUberStore(input: {
+  fetch: FetchLike;
+  environment: UberEnvironment;
+  accessToken: string;
+  storeId: string;
+  integratorStoreId: string;
+  integratorBrandId: string;
+}) {
+  const response = await callUber(
+    input.fetch,
+    `${uberApiBaseUrls[input.environment]}/v1/eats/stores/${encodeURIComponent(input.storeId)}/pos_data`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${input.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      // Only what activation needs: Seramet's id for the location and Seramet as the order
+      // manager. Optional settings (customer requests, extra webhook types) are left at Uber's
+      // defaults: requesting them can need permissions the app has not been given.
+      body: JSON.stringify({
+        integrator_store_id: input.integratorStoreId,
+        integrator_brand_id: input.integratorBrandId,
+        is_order_manager: true,
+        require_manual_acceptance: false,
+      }),
+    },
+  );
+  if (!response.ok) {
+    const detail = parseJson<{ message?: string }>(await response.text())?.message;
+    // Status and Uber's message only (no token): shows why Uber refused an activation.
+    console.warn(
+      JSON.stringify({
+        event: "uber_store_activation_refused",
+        environment: input.environment,
+        status: response.status,
+        message: detail ?? null,
+      }),
+    );
+    throw new UberLinkError(
+      `Uber did not activate the store for Seramet (HTTP ${response.status})${detail ? `: ${detail}` : ""}`,
+    );
+  }
+}
+
+/**
+ * After activation, turns on what Seramet needs from the store: order fulfilment webhooks,
+ * scheduled-order and order-release notifications (webhook version 1.0.0) and customers'
+ * special instructions. Uber's Update Integration Config takes the app's own token (eats.store),
+ * so it is a separate step: a refusal here leaves the store linked and is reported.
+ */
+export async function configureUberStoreIntegration(input: {
+  fetch: FetchLike;
+  environment: UberEnvironment;
+  clientId: string;
+  clientSecret: string;
+  storeId: string;
+}) {
+  const tokenResponse = await callUber(
+    input.fetch,
+    `${uberLoginBaseUrls[input.environment]}/oauth/v2/token`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: input.clientId,
+        client_secret: input.clientSecret,
+        grant_type: "client_credentials",
+        scope: "eats.store",
+      }).toString(),
+    },
+  );
+  const token = parseJson<{ access_token?: string }>(await tokenResponse.text())?.access_token;
+  if (!tokenResponse.ok || !token)
+    throw new UberLinkError(`Uber did not issue the app token (HTTP ${tokenResponse.status})`);
+  const response = await callUber(
+    input.fetch,
+    `${uberApiBaseUrls[input.environment]}/v1/eats/stores/${encodeURIComponent(input.storeId)}/pos_data`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        integration_enabled: true,
+        allowed_customer_requests: {
+          allow_single_use_items_requests: false,
+          allow_special_instruction_requests: true,
+        },
+        webhooks_config: {
+          order_release_webhooks: { is_enabled: true },
+          schedule_order_webhooks: { is_enabled: true },
+          webhooks_version: "1.0.0",
+        },
+      }),
+    },
+  );
+  if (!response.ok) {
+    const detail = parseJson<{ message?: string }>(await response.text())?.message;
+    console.warn(
+      JSON.stringify({
+        event: "uber_store_settings_refused",
+        environment: input.environment,
+        status: response.status,
+        message: detail ?? null,
+      }),
+    );
+    throw new UberLinkError(
+      `Uber did not apply the order settings (HTTP ${response.status})${detail ? `: ${detail}` : ""}`,
+    );
+  }
+}
+
+/** Undoes an activation Seramet could not finish saving, so Uber does not wait on Seramet. */
+export async function deprovisionUberStore(input: {
+  fetch: FetchLike;
+  environment: UberEnvironment;
+  accessToken: string;
+  storeId: string;
+}) {
+  const response = await callUber(
+    input.fetch,
+    `${uberApiBaseUrls[input.environment]}/v1/eats/stores/${encodeURIComponent(input.storeId)}/pos_data`,
+    { method: "DELETE", headers: { Authorization: `Bearer ${input.accessToken}` } },
+  );
+  if (!response.ok)
+    throw new UberLinkError(`Uber did not undo the activation (HTTP ${response.status})`);
+}
+
+/** Uber signs each webhook with the app's client secret: lowercase hex HMAC-SHA256 of the body. */
+export async function verifyUberSignature(rawBody: Uint8Array, signature: string, secret: string) {
+  if (!/^[a-f0-9]{64}$/i.test(signature)) return false;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const digest = new Uint8Array(
+    await crypto.subtle.sign("HMAC", key, rawBody.slice().buffer as ArrayBuffer),
+  );
+  return constantTimeEqual(
+    Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(""),
+    signature.toLowerCase(),
+  );
+}
+
+/** Uber marks each delivery `sandbox` or `production`; anything else is treated as production. */
+export function uberDeliveryEnvironment(header: string | null | undefined): UberEnvironment {
+  return header?.trim().toLowerCase() === "sandbox" ? "SANDBOX" : "PRODUCTION";
+}
+
+export class UberLinkError extends Error {}
+
+function isLinkState(value: UberLinkState) {
+  return (
+    typeof value.tenantId === "string" &&
+    typeof value.branchId === "string" &&
+    typeof value.actorId === "string" &&
+    (value.environment === "SANDBOX" || value.environment === "PRODUCTION") &&
+    typeof value.expiresAt === "number"
+  );
+}
+
+async function hmac(secret: string, message: string) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  return new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message)));
+}
+
+async function ticketKey(secret: string) {
+  const material = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`uber-link-ticket:${secret}`),
+  );
+  return crypto.subtle.importKey("raw", material, { name: "AES-GCM" }, false, [
+    "encrypt",
+    "decrypt",
+  ]);
+}
+
+function toBase64Url(bytes: Uint8Array) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function fromBase64Url(value: string) {
+  const padded = value.replace(/-/g, "+").replace(/_/g, "/");
+  const binary = atob(padded + "=".repeat((4 - (padded.length % 4)) % 4));
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
+
+function constantTimeEqual(left: string, right: string) {
+  if (left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1)
+    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  return difference === 0;
+}
+
+function parseJson<T>(text: string): T | undefined {
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return undefined;
+  }
+}

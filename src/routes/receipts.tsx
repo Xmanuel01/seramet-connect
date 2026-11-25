@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { DocumentEmailDialog } from "@/components/app/DocumentEmailDialog";
 import { DocumentTextPreview } from "@/components/app/DocumentTextPreview";
+import type { RichDocument } from "@/printing/documents";
 import { SerametPrintService } from "@/lib/seramet-print-service";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AppShell } from "@/components/app/AppShell";
@@ -45,9 +46,12 @@ function Receipts() {
   const [printNotice, setPrintNotice] = useState("");
   const [askReason, reasonDialog] = useReasonPrompt();
   const [emailReceipt, setEmailReceipt] = useState<{ id: string; scope: string } | null>(null);
-  const [preview, setPreview] = useState<{ id: string; scope: string; content: string } | null>(
-    null,
-  );
+  const [preview, setPreview] = useState<{
+    id: string;
+    scope: string;
+    content: string;
+    rich?: RichDocument;
+  } | null>(null);
   const {
     activeTenantId,
     branchId,
@@ -144,7 +148,7 @@ function Receipts() {
       SerametPrintService.getBranchHardwareProfile(receipt.branch),
       order,
       "RECEIPT",
-    ).content;
+    );
   };
 
   const exportRows = () => {
@@ -265,7 +269,13 @@ function Receipts() {
                   <button
                     onClick={() => {
                       try {
-                        setPreview({ id: receipt.id, scope, content: receiptContent(receipt.id) });
+                        const job = receiptContent(receipt.id);
+                        setPreview({
+                          id: receipt.id,
+                          scope,
+                          content: job.content,
+                          ...(job.rich ? { rich: job.rich } : {}),
+                        });
                       } catch (error) {
                         setPrintNotice(reportError(error, "Couldn't open the preview. Try again."));
                       }
@@ -295,7 +305,7 @@ function Receipts() {
             <DialogHeader>
               <DialogTitle>Receipt - {preview.id}</DialogTitle>
             </DialogHeader>
-            <DocumentTextPreview content={preview.content} />
+            <DocumentTextPreview content={preview.content} rich={preview.rich} />
             <Btn onClick={() => setPreview(null)}>Close</Btn>
           </DialogContent>
         </Dialog>

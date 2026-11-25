@@ -34,3 +34,7 @@ export const MAX_LOGO_WIDTH: number;
 export const MAX_LOGO_HEIGHT: number;
 export const LOGO_DOCUMENT_TYPES: string[];
 export function validateLogo(logo: unknown): number;
+export function richRasterMetrics(
+  rich: import("./rich-render.mjs").RichDocument,
+  profile: unknown,
+): { height: number; bytes: number; bands: number };
