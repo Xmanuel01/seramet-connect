@@ -283,27 +283,28 @@ export async function provisionUberStore(input: {
         Authorization: `Bearer ${input.accessToken}`,
         "Content-Type": "application/json",
       },
+      // Only what activation needs: Seramet's id for the location and Seramet as the order
+      // manager. Optional settings (customer requests, extra webhook types) are left at Uber's
+      // defaults: requesting them can need permissions the app has not been given.
       body: JSON.stringify({
         integrator_store_id: input.integratorStoreId,
         integrator_brand_id: input.integratorBrandId,
         is_order_manager: true,
         require_manual_acceptance: false,
-        allowed_customer_requests: {
-          allow_single_use_items_requests: false,
-          allow_special_instruction_requests: true,
-        },
-        // Version 1.0.0 is the lowest that sends orders.scheduled.notification for pre-orders.
-        webhooks_config: {
-          order_release_webhooks: { is_enabled: true },
-          schedule_order_webhooks: { is_enabled: true },
-          delivery_status_webhooks: { is_enabled: true },
-          webhooks_version: "1.0.0",
-        },
       }),
     },
   );
   if (!response.ok) {
     const detail = parseJson<{ message?: string }>(await response.text())?.message;
+    // Status and Uber's message only (no token): shows why Uber refused an activation.
+    console.warn(
+      JSON.stringify({
+        event: "uber_store_activation_refused",
+        environment: input.environment,
+        status: response.status,
+        message: detail ?? null,
+      }),
+    );
     throw new UberLinkError(
       `Uber did not activate the store for Seramet (HTTP ${response.status})${detail ? `: ${detail}` : ""}`,
     );

@@ -168,11 +168,15 @@ describe("Uber Eats store link", () => {
       integrator_store_id: "branch-a",
       is_order_manager: true,
       require_manual_acceptance: false,
-      webhooks_config: {
-        schedule_order_webhooks: { is_enabled: true },
-        webhooks_version: "1.0.0",
-      },
     });
+    // Minimal activation: no optional settings that could need extra app permissions.
+    const sent = JSON.parse(String(calls[1]!.init?.body)) as Record<string, unknown>;
+    expect(Object.keys(sent).sort()).toEqual([
+      "integrator_brand_id",
+      "integrator_store_id",
+      "is_order_manager",
+      "require_manual_acceptance",
+    ]);
   });
 
   it("reads store lists keyed as data[].id and treats an empty list as empty", async () => {
