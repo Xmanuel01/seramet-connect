@@ -3663,6 +3663,7 @@ export class OnboardingService {
           secretReference ?? null,
           json({
             configuration: input.configuration ?? {},
+            ...(input.displayName ? { displayName: input.displayName } : {}),
             callbackUrl: callback,
             capabilities: provider.definition.capabilities,
           }),
@@ -3788,7 +3789,12 @@ export class OnboardingService {
     const orderChannelId = input.orderChannelId ?? ticket.orderChannelId;
     if (!orderChannelId) throw validation("Choose the delivery-app order channel for Uber orders");
     await this.requireMarketplaceChannel(orderChannelId);
-    const connectionId = stableId("connection", `${uberEatsDefinition.id}:${ticket.branchId}`);
+    // One connection per Uber store: a branch can sell through several Uber storefronts (for
+    // example two brands cooked in one kitchen), and each keeps its own link and health.
+    const connectionId = stableId(
+      "connection",
+      `${uberEatsDefinition.id}:${ticket.branchId}:${store.storeId.toLowerCase()}`,
+    );
     const owner = await this.uberStoreOwner(store.storeId, ticket.environment);
     if (owner && (owner.tenant_id !== this.actor.tenantId || owner.connection_id !== connectionId))
       throw validation("This Uber store is already linked to another Seramet location");
@@ -3812,6 +3818,7 @@ export class OnboardingService {
       providerId: uberEatsDefinition.id,
       environment: ticket.environment,
       secretReference: uberPlatformSecretReference(ticket.environment),
+      displayName: `Uber Eats · ${store.name}`,
       configuration: {
         externalStoreId: store.storeId,
         externalStoreName: store.name,
@@ -3842,13 +3849,6 @@ export class OnboardingService {
       );
       throw validation("This Uber store is already linked to another Seramet location");
     }
-    // One Uber store per branch: every link ends by matching all store mappings to the store
-    // the connection finally points at, so overlapping links in two tabs settle on that store
-    // (whichever finishes last re-reads the last saved connection) instead of disabling both.
-    const finalStoreId = await this.configuredUberStore(connectionId);
-    await this.reconcileUberStoreMappings(connectionId, (externalId) =>
-      finalStoreId && sameUberStore(externalId, finalStoreId) ? "MAPPED" : "DISABLED",
-    );
     await this.attachChannelConnection(orderChannelId, connectionId);
     return { connection, store };
   }
@@ -3866,23 +3866,6 @@ export class OnboardingService {
       )
       .bind(uberEatsDefinition.id, storeId, environment)
       .first<{ tenant_id: string; connection_id: string }>();
-  }
-
-  private async configuredUberStore(connectionId: string) {
-    const row = await this.db
-      .prepare("SELECT payload_json FROM provider_connections WHERE tenant_id=? AND id=?")
-      .bind(this.actor.tenantId, connectionId)
-      .first<{ payload_json: string }>();
-    try {
-      const payload = JSON.parse(row?.payload_json ?? "{}") as {
-        configuration?: { externalStoreId?: unknown };
-      };
-      return typeof payload.configuration?.externalStoreId === "string"
-        ? payload.configuration.externalStoreId
-        : undefined;
-    } catch {
-      return undefined;
-    }
   }
 
   /**
@@ -3921,7 +3904,11 @@ export class OnboardingService {
     if (!channel) throw validation("Choose an active delivery-app order channel");
   }
 
-  /** Points exactly one order channel at the connection, so Uber orders use the chosen one. */
+  /**
+   * Orders find their channel through the connection's `orderChannelId`. The channel's own
+   * pointer (used for payout accounts) is set only when it has none, so linking a second Uber
+   * store to the same channel does not take it from the first; other channels stop pointing here.
+   */
   private async attachChannelConnection(channelId: string, connectionId: string) {
     const rows =
       (
@@ -3937,8 +3924,9 @@ export class OnboardingService {
       } catch {
         payload = {};
       }
-      const pointsHere = payload["deliveryProviderConnectionId"] === connectionId;
-      if (row.id === channelId ? pointsHere : !pointsHere) continue;
+      const pointer = payload["deliveryProviderConnectionId"];
+      const pointsHere = pointer === connectionId;
+      if (row.id === channelId ? pointsHere || Boolean(pointer) : !pointsHere) continue;
       const next = { ...payload };
       if (row.id === channelId) next["deliveryProviderConnectionId"] = connectionId;
       else delete next["deliveryProviderConnectionId"];
