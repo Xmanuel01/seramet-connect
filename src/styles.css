@@ -173,6 +173,12 @@
 @layer base {
   * {
     border-color: var(--color-border);
+    /* Scrollbars are hidden app-wide; scrolling by wheel, touch and keyboard still works. */
+    scrollbar-width: none;
+  }
+
+  *::-webkit-scrollbar {
+    display: none;
   }
 
   body {
