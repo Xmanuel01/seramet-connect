@@ -289,9 +289,11 @@ describe("one sale, from the till to the reports", () => {
     for (const route of Object.values(profile.documentRoutes)) route.template = "80mm";
     const printed = SerametPrintService.createDocumentJob(profile, order, "RECEIPT").content;
     await hydrateSeededTenantsForTests(db, {});
-    expect(printed).toMatch(/\|CASH\s+\|\s*\|\s+150\.00\|/);
-    expect(printed).toMatch(/\|Change\s+\|\s*\|\s+28\.78\|/);
-    expect(printed).toMatch(/\|TOTAL\s+\|\s+121\.22\|/);
+    expect(printed).toMatch(/^Method: CASH$/m);
+    expect(printed).toMatch(/^Amount Paid: KES 150\.00$/m);
+    expect(printed).toMatch(/^Change: KES 28\.78$/m);
+    expect(printed).toMatch(/^GRAND TOTAL\s+KES 121\.22$/m);
+    expect(printed).toMatch(/^RECEIPT\s+\[ PAID \]$/m);
     expect(printed).not.toMatch(/PTX-|CASH-/);
 
     // Replaying the same command creates nothing twice.

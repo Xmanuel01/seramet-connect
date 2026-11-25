@@ -1,3 +1,5 @@
+import { renderRichForProfile, validateRichDocument } from "./rich-render.mjs";
+
 // Versioned, printer-independent compatibility adapter for the existing ruled
 // templates. Both renderers consume the same authorized business content.
 export const MAX_LAYOUT_ROWS = 512;
@@ -74,7 +76,7 @@ export function validateRenderProfile(profile, transport = "TCP") {
   if (profile.renderingMode !== "RASTER_ESC_POS") return;
   const r = profile.raster;
   if (
-    transport !== "TCP" ||
+    !["TCP", "WINDOWS"].includes(transport) ||
     !r ||
     r.command !== "GS_V_0" ||
     !Number.isInteger(r.printableWidthDots) ||
@@ -117,16 +119,50 @@ export function rasterMetrics(layout, profile) {
     throw new Error("RASTER_SIZE_LIMIT");
   return { heights, height, stride, bands, bytes, lineHeight };
 }
+/**
+ * Raster dimensions of a typeset (rich) document on one printer, checked
+ * against the printer's limits.
+ */
+export function richRasterMetrics(rich, profile) {
+  validateRenderProfile(profile);
+  if (profile.renderingMode !== "RASTER_ESC_POS" || rich?.paper !== profile.paperWidth)
+    throw new Error("INVALID_DOCUMENT_LAYOUT");
+  const bitmap = renderRichForProfile(rich, profile.raster);
+  const stride = bitmap.width / 8;
+  const bands = Math.ceil(bitmap.height / profile.raster.maxBandHeight);
+  const bytes = stride * bitmap.height + bands * 8 + 5 + (profile.cutter === "none" ? 3 : 4);
+  if (bitmap.height > profile.raster.maxHeightDots || bytes > profile.raster.maxBytes)
+    throw new Error("RASTER_SIZE_LIMIT");
+  return { height: bitmap.height, bytes, bands };
+}
+
 export function validateRenderJob(job) {
   const hasRaster = [job.profile, job.fallbackProfile].some(
     (p) => p?.renderingMode === "RASTER_ESC_POS",
   );
+  // v1: text only. v2: raster from the ruled text layout. v3: raster from the
+  // typeset approved document (rich), with the ruled text for text printers.
+  const rich = job.v === 3;
   if (
-    ![1, 2].includes(job.v) ||
-    hasRaster !== (job.v === 2) ||
-    (!hasRaster && job.document !== undefined)
+    ![1, 2, 3].includes(job.v) ||
+    hasRaster !== job.v >= 2 ||
+    (!hasRaster && job.document !== undefined) ||
+    (rich && (job.document !== undefined || job.rich === undefined || job.logo !== undefined)) ||
+    (!rich && job.rich !== undefined)
   )
     throw new Error("UNSUPPORTED_RENDER_ENVELOPE");
+  if (rich) {
+    validateRichDocument(job.rich);
+    for (const [target, profile] of [
+      [job.target, job.profile],
+      [job.fallbackTarget, job.fallbackProfile],
+    ]) {
+      if (!target) continue;
+      validateRenderProfile(profile, target.transport);
+      if (profile.renderingMode === "RASTER_ESC_POS") richRasterMetrics(job.rich, profile);
+    }
+    return;
+  }
   // ESC a 1, GS v 0 header, the image, a line feed and ESC a 0.
   const logoBytes = job.logo === undefined ? 0 : validateLogo(job.logo) + 15;
   for (const [target, profile] of [

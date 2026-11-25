@@ -1,5 +1,10 @@
-import { expect, it } from "vitest";
-import { getVisibleNavGroups, movedPaths, roleCanAccessPath } from "@/components/app/nav";
+import { describe, expect, it } from "vitest";
+import {
+  getVisibleNavGroups,
+  movedPaths,
+  navItemIsActive,
+  roleCanAccessPath,
+} from "@/components/app/nav";
 import { allPermissionCodes, permissions } from "@/platform/permissions";
 
 const systemItems = (granted: readonly string[]) =>
@@ -81,4 +86,21 @@ it("names the two attendance pages for what they do", () => {
   const workforce = pathsFor(allPermissionCodes).filter((item) => item.group === "Workforce");
   expect(workforce.find((item) => item.to === "/attendance")?.label).toBe("Clock In/Out");
   expect(workforce.find((item) => item.to === "/schedule")?.label).toBe("Team Timecards");
+});
+
+describe("marketplace store entries in the side menu", () => {
+  const marketplace = { label: "Marketplace", to: "/marketplace" };
+  const grill = { label: "Uber Eats · Grill", to: "/marketplace", search: { store: "c-grill" } };
+  const swahili = { label: "Uber Eats · Swahili", to: "/marketplace", search: { store: "c-sw" } };
+  const items = [marketplace, grill, swahili];
+
+  it("highlights only the open store, and Marketplace when no store is open", () => {
+    const open = (search: Record<string, unknown>) =>
+      items
+        .filter((item) => navItemIsActive(item, "/marketplace", search, items))
+        .map((i) => i.label);
+    expect(open({ store: "c-grill" })).toEqual(["Uber Eats · Grill"]);
+    expect(open({})).toEqual(["Marketplace"]);
+    expect(navItemIsActive(grill, "/orders", { store: "c-grill" }, items)).toBe(false);
+  });
 });

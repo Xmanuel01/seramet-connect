@@ -513,3 +513,39 @@ test("bridge rejects origin, bearer and unsigned requests before transport", asy
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(delivered, 1);
 });
+
+test("approved document headings print bold in text mode without bolding body lines", () => {
+  const content = [
+    "              KITCHEN ORDER",
+    "NEW ORDER                          KITCHEN",
+    "ORDER #06551",
+    "DATE: 22 Nov 2026",
+    "2 x Mbuzi Stew + Rice",
+    "    Item instructions: Extra soup",
+    "           GENERAL INSTRUCTIONS",
+    "GRAND TOTAL                   KES 2,850.00",
+    "           END OF KITCHEN ORDER",
+  ].join("\n");
+  const bytes = encodeEscPos(content, { ...profile, paperWidth: "80mm", emphasis: true });
+  const on = Buffer.from([27, 69, 1]);
+  const bold = (text) => bytes.includes(Buffer.concat([on, Buffer.from(text)]));
+  for (const text of [
+    "NEW ORDER",
+    "ORDER #06551",
+    "2 x Mbuzi",
+    "GENERAL INSTRUCTIONS",
+    "GRAND TOTAL",
+    "END OF KITCHEN ORDER",
+  ])
+    assert.ok(
+      bold(`   ${text}`) ||
+        bytes.includes(Buffer.concat([on, Buffer.from(`   ${" ".repeat(11)}${text}`)])),
+      text,
+    );
+  for (const text of ["DATE: 22 Nov 2026", "Item instructions"])
+    assert.ok(
+      !bytes.includes(Buffer.concat([on, Buffer.from(`   ${text}`)])) &&
+        !bytes.includes(Buffer.concat([on, Buffer.from(`       ${text}`)])),
+      text,
+    );
+});

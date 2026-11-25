@@ -116,10 +116,16 @@ it("binds explicit raster capabilities and canonical layout; text diagnostics ca
   const first = await issue(input);
   const decoded = JSON.parse(Buffer.from(first.authorization.payload, "base64url").toString());
   expect(decoded.profile.renderingMode).toBe("RASTER_ESC_POS");
-  expect(decoded.v).toBe(2);
+  // Image printers get the approved typeset layout (v3), with the ruled text kept
+  // for a text-mode fallback; the legacy text-grid raster layout is not sent.
+  expect(decoded.v).toBe(3);
   expect(decoded.profile.raster).toEqual(raster);
-  expect(decoded.document.version).toBe(1);
-  expect(decoded.document.rows.some((r: { kind: string }) => r.kind === "table")).toBe(true);
+  expect(decoded.document).toBeUndefined();
+  expect(decoded.logo).toBeUndefined();
+  expect(decoded.rich.paper).toBe(config.paperWidth);
+  expect(JSON.stringify(decoded.rich.blocks[0])).toContain("PRINTER TEST - NOT A SALE");
+  expect(JSON.stringify(decoded.rich)).toContain("INVOICE");
+  expect(decoded.content).toContain("PRINTER TEST - NOT A SALE");
   await expect(issue({ ...input, testRenderingMode: "TEXT_ESC_POS" })).rejects.toMatchObject({
     status: 409,
   });
@@ -139,10 +145,11 @@ it("binds explicit raster capabilities and canonical layout; text diagnostics ca
   await expect(
     handlePrintingApi(request("consume", { authorization: changed }), env(), repository),
   ).rejects.toMatchObject({ status: 403 });
+  // Image (raster) mode is allowed on Windows-spooled USB printers too.
   expect(
     printerConfigurationSchema.safeParse({ ...config, transport: "WINDOWS", osPrinterName: "test" })
       .success,
-  ).toBe(false);
+  ).toBe(true);
   expect(
     printerConfigurationSchema.safeParse({ ...config, raster: { ...raster, command: "UNKNOWN" } })
       .success,
@@ -565,12 +572,12 @@ it("issues server-generated diagnostic evidence without accepting client content
     target: { id: printer.id, host: "127.0.0.1" },
   });
   expect(payload.content).toContain("NOT A SALE");
-  // The test print uses the real kitchen ticket template at the printer's width.
-  expect(payload.content).toMatch(/^KITCHEN ORDER\s+KOT /m);
-  expect(payload.content).toContain("PRINTER DIAGNOSTIC");
+  // The test print uses the approved kitchen ticket at the printer's width.
+  expect(payload.content).toMatch(/^\s+KITCHEN ORDER$/m);
+  expect(payload.content).toMatch(/^NEW ORDER\s+KITCHEN$/m);
+  expect(payload.content).toContain("1 x Printer diagnostic");
   const width = printer.paperWidth === "58mm" ? 32 : 42;
   for (const line of payload.content.split("\n")) expect(line.length).toBeLessThanOrEqual(width);
-  expect(payload.content).not.toMatch(/^[-=]+$/m);
   for (const testKind of ["BILL", "RECEIPT"]) {
     const document = await (await handlePrintingApi(
       request("authorize", { ...input, testKind, recordId: crypto.randomUUID() }),
@@ -580,8 +587,9 @@ it("issues server-generated diagnostic evidence without accepting client content
     const content = JSON.parse(
       Buffer.from(document.authorization.payload, "base64url").toString("utf8"),
     ).content;
-    expect(content).toContain(testKind === "BILL" ? "BILL" : "RECEIPT");
-    expect(content).toMatch(/^\|Item\s*\|\s*Qty\|\s*Amount\|$/m);
+    // The bill prints the approved INVOICE layout; the receipt the approved RECEIPT.
+    expect(content).toMatch(testKind === "BILL" ? /^\s+INVOICE$/m : /^RECEIPT/m);
+    expect(content).toMatch(/^\|QTY\|ITEM/m);
   }
   expect(JSON.stringify(result)).not.toContain(signingKey);
   await expect(
@@ -767,8 +775,8 @@ it("authorizes only the exact claimed immutable station obligation and renders i
     JSON.parse(Buffer.from(result.authorization.payload, "base64url").toString("utf8"));
   expect(decode(first).content).toBe(decode(second).content);
   expect(decode(first).id).toBe(`${obligationId}:0`);
-  expect(decode(first).content).toMatch(/\|\s*2\|PERSISTED MEAL/);
-  expect(decode(first).content).toContain("NO SALT");
+  expect(decode(first).content).toMatch(/^2 x Persisted meal$/im);
+  expect(decode(first).content.toUpperCase()).toContain("NO SALT");
   await handlePrintingApi(
     request("consume", { authorization: first.authorization }),
     env(),
@@ -828,9 +836,9 @@ it("authorizes only the exact claimed immutable station obligation and renders i
     repository,
   ))!.json();
   const text = decode(reprint).content.replace(/\s+/g, " ");
-  expect(text).toContain("REPRINT");
-  expect(text).toContain("by Reviewing manager");
-  expect(text).not.toContain(`by ${state.orders[0]!.cashier}`);
+  expect(decode(reprint).content.split("\n")[1]).toMatch(/^REPRINT\s+KITCHEN$/);
+  expect(text).toContain("REQUESTED BY: Reviewing manager");
+  expect(text).not.toContain(`BY: ${state.orders[0]!.cashier}`);
 });
 
 it("derives a separate print signing master when no explicit key is configured", async () => {

@@ -534,36 +534,6 @@ test("full day: sign-up, onboarding, setup, trading and business-day close", asy
     await shot(page, "day-closed");
   });
 
-  await test.step("10. Owner connects Uber Eats for the branch (testing mode)", async () => {
-    await ownerSignIn(page);
-    await page.goto("/seramet-setup");
-    await page.getByRole("button", { name: /^Delivery integrations/ }).click();
-    const panel = page
-      .locator("div")
-      .filter({ has: page.getByText("Uber Eats", { exact: true }) })
-      .last();
-    await page
-      .getByRole("combobox", { name: "Branch" })
-      .last()
-      .selectOption({ label: "Westlands" });
-    await page.getByLabel("Uber store ID").fill("4f8c2a51-7d3e-4b9a-9c61-2e5d8f0a7b13");
-    await page.getByLabel("Client ID").fill("journey-uber-client-id");
-    await page.getByLabel("Client secret", { exact: true }).fill("journey-uber-client-secret");
-    await page.getByRole("button", { name: "Connect and test" }).click();
-    // This container cannot reach Uber, so the saved connection reports a clear failure.
-    await expect(page.getByText(/Connected to Uber Eats|test didn't pass/)).toBeVisible({
-      timeout: 60_000,
-    });
-    await expect(page.getByText(/Webhook address for Uber/)).toBeVisible();
-    await expect(
-      page
-        .locator("code")
-        .filter({ hasText: "/api/seramet/integrations/webhooks/UBER_EATS/uber-eats-" }),
-    ).toBeVisible();
-    await shot(page, "uber-eats");
-    void panel;
-  });
-
   expect(problems, problems.join("\n")).toEqual([]);
 });
 

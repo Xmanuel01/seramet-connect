@@ -66,10 +66,34 @@ export type NavItem = {
   icon?: LucideIcon;
   permission?: PermissionCode;
   activePaths?: readonly string[];
+  /** Query the link carries, e.g. one marketplace store on the Marketplace page. */
+  search?: Readonly<Record<string, string>>;
+  /** Shown indented under the entry before it. */
+  child?: boolean;
 };
 
 export function navItemMatchesPath(item: NavItem, path: string) {
   return item.to === path || Boolean(item.activePaths?.includes(path));
+}
+
+/**
+ * Whether an entry is the current page. An entry with a query (a marketplace store) needs its
+ * query to match; the plain entry for the same page steps aside while one of those is open.
+ */
+export function navItemIsActive(
+  item: NavItem,
+  path: string,
+  search: Readonly<Record<string, unknown>>,
+  siblings: readonly NavItem[] = [],
+): boolean {
+  if (item.search)
+    return (
+      item.to === path && Object.entries(item.search).every(([key, value]) => search[key] === value)
+    );
+  if (!navItemMatchesPath(item, path)) return false;
+  return !siblings.some(
+    (other) => other !== item && other.search && navItemIsActive(other, path, search),
+  );
 }
 
 export type NavGroup = {

@@ -26,6 +26,7 @@ import {
   ReceiptText,
   Search,
   Sparkles,
+  Store,
   Sun,
   Trash2,
   Truck,
@@ -33,7 +34,13 @@ import {
   Users,
   WalletCards,
 } from "lucide-react";
-import { getVisibleNavGroups, navItemMatchesPath, roleCanAccessPath } from "./nav";
+import {
+  getVisibleNavGroups,
+  navItemIsActive,
+  navItemMatchesPath,
+  roleCanAccessPath,
+  type NavItem,
+} from "./nav";
 import { Logo } from "./Logo";
 import { CommandPalette } from "./CommandPalette";
 import { cn } from "@/lib/utils";
@@ -215,6 +222,30 @@ export function AppShell({
   const tenantBranchCount = platformState.branches.filter(
     (item) => item.tenantId === activeTenantId,
   ).length;
+  const deliveryProviderIds = new Set(
+    platformState.providers
+      .filter((provider) => provider.category === "DELIVERY")
+      .map((provider) => provider.id),
+  );
+  const marketplaceStoreItems: NavItem[] = platformState.connections
+    .filter(
+      (connection) =>
+        connection.tenantId === activeTenantId &&
+        deliveryProviderIds.has(connection.providerId) &&
+        connection.status !== "DISABLED" &&
+        (!branchId ||
+          branchId === "ALL" ||
+          !connection.branchId ||
+          connection.branchId === branchId),
+    )
+    .sort((a, b) => a.displayName.localeCompare(b.displayName))
+    .map((connection) => ({
+      label: connection.displayName,
+      to: "/marketplace",
+      icon: Store,
+      search: { store: connection.id },
+      child: true,
+    }));
   const visibleNavGroups = getVisibleNavGroups(
     role,
     branch,
@@ -224,10 +255,18 @@ export function AppShell({
   )
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => item.to !== "/enterprise" || tenantBranchCount > 1),
+      items: group.items
+        .filter((item) => item.to !== "/enterprise" || tenantBranchCount > 1)
+        // Each linked marketplace store gets its own entry under Marketplace.
+        .flatMap((item) =>
+          item.to === "/marketplace" ? [item, ...marketplaceStoreItems] : [item],
+        ),
     }))
     .filter((group) => group.items.length > 0);
   const path = useRouterState().location.pathname;
+  const locationSearch = useRouterState().location.search as Record<string, unknown>;
+  const isActive = (item: NavItem, siblings: readonly NavItem[] = []) =>
+    navItemIsActive(item, path, locationSearch, siblings);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -510,15 +549,17 @@ export function AppShell({
                 {g.group}
               </div>
               {g.items.map((item) => {
-                const active = navItemMatchesPath(item, path);
+                const active = isActive(item, g.items);
                 const Icon = item.icon;
                 return item.to ? (
                   <Link
-                    key={item.label + item.to}
+                    key={item.label + item.to + JSON.stringify(item.search ?? {})}
                     to={item.to}
+                    {...(item.search ? { search: item.search as never } : {})}
                     aria-current={active ? "page" : undefined}
                     className={cn(
                       "flex min-h-9 items-center gap-2.5 rounded-md px-2.5 text-[13px] transition-colors",
+                      item.child && "ml-4 text-[12px]",
                       active
                         ? "bg-accent font-semibold text-accent-foreground"
                         : "text-muted-foreground hover:bg-secondary hover:text-foreground",
@@ -600,8 +641,11 @@ export function AppShell({
               >
                 {g.items.map((item, idx, items) => {
                   const active =
-                    navItemMatchesPath(item, path) &&
-                    items.findIndex((candidate) => candidate.to === item.to) === idx;
+                    isActive(item, items) &&
+                    (Boolean(item.search) ||
+                      items.findIndex(
+                        (candidate) => candidate.to === item.to && !candidate.search,
+                      ) === idx);
                   const Icon = item.icon;
                   const content = (
                     <span
@@ -611,6 +655,7 @@ export function AppShell({
                           ? "bg-accent text-accent-foreground shadow-sm ring-1 ring-border/70"
                           : "text-muted-foreground hover:bg-secondary hover:text-foreground",
                         isCollapsed && "justify-center px-0",
+                        item.child && !isCollapsed && "ml-4 text-[12px]",
                       )}
                     >
                       {Icon && (
@@ -621,8 +666,9 @@ export function AppShell({
                   );
                   return item.to ? (
                     <Link
-                      key={item.label + item.to}
+                      key={item.label + item.to + JSON.stringify(item.search ?? {})}
                       to={item.to}
+                      {...(item.search ? { search: item.search as never } : {})}
                       title={item.label}
                       aria-current={active ? "page" : undefined}
                       onClick={onNavigate}

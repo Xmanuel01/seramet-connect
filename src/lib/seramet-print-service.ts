@@ -2,11 +2,17 @@ import { activeLocale, activeCurrency } from "@/lib/currency";
 import { parseMajorAmount, formatMinor, minorDigits } from "@/payments/money";
 import {
   renderAmendmentTicket as renderOrderChangeTemplate,
+  duplicateRich,
+  renderApprovedInvoice,
+  renderApprovedReceipt,
   renderCustomerBill,
+  renderOrderTicket,
   renderProductionTicket as renderStationTicketTemplate,
   renderSalesReceipt,
   renderTaxInvoice,
   renderVoidTicket as renderVoidTemplate,
+  type PrintedDocument,
+  type RichDocument,
 } from "@/printing/documents";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { getSerametAccessToken } from "@/lib/access-token";
@@ -179,6 +185,15 @@ export type OrderForPrint = {
   receiptNumber?: string;
   invoiceNumber?: string;
   tillNumber?: string;
+  /**
+   * Rates (basis points) of the branch's active VAT rules, for the "VAT (16%)"
+   * label. The amount printed is always the recorded tax.
+   */
+  taxRatesBps?: number[];
+  /** Module rows of a real M-Pesa dynamic QR for the amount due (Daraja). */
+  mpesaQrModules?: string[];
+  /** KRA eTIMS signature for a receipt, from the OSCU's signed response. */
+  etims?: import("@/printing/documents").EtimsStatus;
   paymentReference?: string;
   paymentBreakdown?: { method: string; amount: number; reference?: string }[];
   loyaltySummary?: {
@@ -211,6 +226,8 @@ export type PrintJob = {
   failureReason?: string;
   template: string;
   content: string;
+  /** Typeset form of the approved documents, printed by raster printers and shown in previews. */
+  rich?: RichDocument;
   duplicateKey: string;
   reprintOfJobId?: string;
   productionStation?: ProductionStation;
@@ -619,6 +636,7 @@ export const SerametPrintService = {
         ),
         original.content,
       ].join("\n"),
+      ...(original.rich ? { rich: duplicateRich(original.rich, requestedBy) } : {}),
       duplicateKey,
       reprintOfJobId: original.id,
       ...(resolution.routeMode === "fallback" && resolution.fallbackPrinter?.id
@@ -998,7 +1016,7 @@ function createJob({
   order,
   documentType,
   resolution,
-  content,
+  content: rendered,
   productionStation,
   kitchenTicketId,
   kitchenTicketRecordId,
@@ -1010,7 +1028,8 @@ function createJob({
   order: OrderForPrint;
   documentType: PrintDocumentType;
   resolution: RouteResolution;
-  content: string;
+  /** Ruled text, or a rendered document carrying its typeset form too. */
+  content: string | PrintedDocument;
   productionStation?: ProductionStation;
   kitchenTicketId?: string;
   kitchenTicketRecordId?: string;
@@ -1018,6 +1037,8 @@ function createJob({
   amendmentType?: PrintJob["amendmentType"];
   duplicateKey?: string;
 }): PrintJob {
+  const content = typeof rendered === "string" ? rendered : rendered.content;
+  const rich = typeof rendered === "string" ? undefined : rendered.rich;
   const assignedPrinter =
     resolution.routeMode === "fallback" ? resolution.fallbackPrinter : resolution.printer;
   const isKdsTicket = resolution.destination === "KDS" || documentType === "KDS_TICKET";
@@ -1052,6 +1073,7 @@ function createJob({
     kitchenTicketRecordId,
     kitchenDelivery,
     amendmentType,
+    rich,
   }) as PrintJob;
 }
 
@@ -1131,6 +1153,19 @@ function renderProductionTicket(
   const issued = documentDateTime(order.createdAt, identity.timeZone);
   const ticketNumber = printableTicketNumber(kitchenTicketId, order.orderId);
 
+  // Kitchen and bar tickets print the approved KOT/BOT layout: no branding,
+  // no prices, only this station's items. Dispatch and KDS keep their layouts.
+  if (documentType === "FOOD_KOT" || documentType === "BAR_TICKET") {
+    return renderApprovedOrderTicket(
+      isBar ? "BAR" : "KITCHEN",
+      order,
+      lines,
+      amendmentType,
+      identity.timeZone,
+      width === 32 ? "58mm" : "80mm",
+    );
+  }
+
   // KDS screens and tickets with prices keep the legacy layout for now.
   if (documentType !== "KDS_TICKET" && !showPrices) {
     return renderStationTicket(
@@ -1181,6 +1216,241 @@ function renderProductionTicket(
     thermalItems(lines, width, showPrices, money, true),
     boxedNote("SPECIAL REQUEST", order.kitchenNote, width),
   ]);
+}
+
+/** Date and time as the approved documents print them, in the branch's time zone. */
+export function approvedDateTime(value: string, timeZone = localTimeZone) {
+  const parsed = new Date(value);
+  const at = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  let zone = timeZone;
+  try {
+    new Intl.DateTimeFormat("en-GB", { timeZone: zone });
+  } catch {
+    zone = localTimeZone;
+  }
+  const part = (options: Intl.DateTimeFormatOptions, locale: string) =>
+    new Intl.DateTimeFormat(locale, { ...options, timeZone: zone }).formatToParts(at);
+  const dateParts = part({ day: "2-digit", month: "short", year: "numeric" }, "en-GB");
+  const pick = (parts: Intl.DateTimeFormatPart[], type: string) =>
+    parts.find((p) => p.type === type)?.value ?? "";
+  const timeParts = part({ hour: "numeric", minute: "2-digit", hour12: true }, "en-US");
+  return {
+    date: `${pick(dateParts, "day")} ${pick(dateParts, "month")} ${pick(dateParts, "year")}`,
+    time: `${pick(timeParts, "hour")}:${pick(timeParts, "minute")} ${pick(timeParts, "dayPeriod").toUpperCase()}`,
+  };
+}
+
+/**
+ * Who the ticket is for: the customer's name or the marketplace, as the POS
+ * recorded it. Generic defaults print as the approved "Walk-in".
+ */
+export function ticketCustomer(order: Pick<OrderForPrint, "customer" | "table">) {
+  const name = order.customer?.trim();
+  if (!name || name === "-" || /^walk[\s-]?in(\s+customer)?$/i.test(name)) return "Walk-in";
+  if (order.table && name.toLowerCase() === `table ${order.table}`.toLowerCase()) return "Dine-in";
+  return name;
+}
+
+function renderApprovedOrderTicket(
+  station: "KITCHEN" | "BAR",
+  order: OrderForPrint,
+  lines: OrderLineForPrint[],
+  amendmentType: NonNullable<PrintJob["amendmentType"]>,
+  timeZone: string,
+  paper: "58mm" | "80mm",
+) {
+  const issued = approvedDateTime(order.createdAt, timeZone);
+  const set = (value: string | undefined) => {
+    const trimmed = value?.trim();
+    return trimmed && trimmed !== "-" ? trimmed : undefined;
+  };
+  const voided = amendmentType === "VOID";
+  return renderOrderTicket(
+    {
+      station,
+      status: amendmentType,
+      orderNumber: cleanOrderId(order.orderId),
+      date: issued.date,
+      time: issued.time,
+      customer: ticketCustomer(order),
+      ...(set(order.table) ? { table: set(order.table) } : {}),
+      lines: lines.map((line) => ({
+        name: line.name,
+        quantity: line.quantity,
+        modifiers: line.modifiers ?? [],
+        ...(set(line.itemNote) ? { note: set(line.itemNote) } : {}),
+      })),
+      ...(set(order.kitchenNote) ? { generalInstructions: set(order.kitchenNote) } : {}),
+      requestedBy: (voided ? set(order.voidedBy) : undefined) ?? set(order.requestedBy) ?? "-",
+      ...(voided && set(order.voidReason) ? { voidReason: set(order.voidReason) } : {}),
+      ...(voided && set(order.voidApprovedBy) ? { voidApprovedBy: set(order.voidApprovedBy) } : {}),
+    },
+    { paper },
+  );
+}
+
+/**
+ * Bill, invoice and receipt on the approved thermal layouts, printing the
+ * till's own settled figures: nothing is recalculated here.
+ */
+function renderApprovedCustomerDocument(
+  documentType: "BILL" | "RECEIPT" | "INVOICE",
+  order: OrderForPrint,
+  template: PrintTemplateSettings,
+  profile: BranchHardwareProfile,
+  paper: "58mm" | "80mm",
+) {
+  const identity = profile.printIdentity;
+  const set = (value: string | undefined) => {
+    const trimmed = value?.trim();
+    return trimmed && trimmed !== "-" ? trimmed : undefined;
+  };
+  const brand = /^seramet(?:\s+(?:lite|pos))?$/i.test(identity.receiptBrand.trim())
+    ? identity.businessName
+    : identity.receiptBrand;
+  const business = {
+    name: set(brand) ?? identity.businessName,
+    ...(set(identity.address) ? { address: set(identity.address) } : {}),
+    ...(set(identity.phone) ? { phone: set(identity.phone) } : {}),
+  };
+  const issued = approvedDateTime(order.createdAt, identity.timeZone);
+  const lines = order.lines.map((line) => ({
+    name: line.name,
+    quantity: line.quantity,
+    unitPrice: line.unitPrice,
+    modifiers: line.modifiers ?? [],
+  }));
+  const delivery = order.deliveryCharge ?? 0;
+  const service = order.serviceCharge ?? 0;
+  const discount = order.discount ?? 0;
+  // VAT always prints when the template shows tax, as in the approved design:
+  // "VAT (0%) 0.00" when none was charged. The rate comes from the branch's
+  // configured VAT rule; with no single configured rate it prints as "VAT".
+  // Whether VAT was added on top or is inside the prices follows from the
+  // recorded figures. The amount is always the recorded tax.
+  const cents = (value: number) => Math.round(value * 100);
+  const exclusive =
+    cents(order.subtotal) +
+      cents(service) +
+      cents(delivery) -
+      cents(discount) +
+      cents(order.tax) ===
+    cents(order.total);
+  const showVat = template.showTax;
+  const vatLabel = (() => {
+    if (cents(order.tax) === 0) return "VAT (0%)";
+    const rates = [...new Set((order.taxRatesBps ?? []).filter((r) => r > 0))];
+    const rate =
+      rates.length === 1 ? `${Number((rates[0]! / 100).toFixed(2)).toString()}%` : undefined;
+    if (exclusive) return rate ? `VAT (${rate})` : "VAT";
+    return rate ? `VAT (${rate} incl.)` : "VAT (incl.)";
+  })();
+  const totals = {
+    subtotal: order.subtotal,
+    ...(showVat ? { vat: order.tax, vatLabel } : {}),
+    ...(delivery ? { deliveryCharge: delivery } : {}),
+    ...(service ? { serviceCharge: service } : {}),
+    ...(discount ? { discount } : {}),
+    total: order.total,
+  };
+  const ctx = { paper, currency: identity.currency ?? activeCurrency() } as const;
+  const customer = ticketCustomer(order);
+  const table = set(order.table);
+
+  if (documentType === "RECEIPT") {
+    const payments = (
+      order.paymentBreakdown?.length
+        ? order.paymentBreakdown
+        : [
+            {
+              method: order.paymentMethod ?? "Recorded",
+              amount: order.paid ?? order.total,
+              reference: order.paymentReference,
+            },
+          ]
+    ).map((payment) => ({
+      method: payment.method,
+      amount: payment.amount,
+      // Cash has no outside reference; the till's internal id means nothing to the guest.
+      ...(payment.reference &&
+      !/^cash$/i.test(payment.method.trim()) &&
+      !/^CASH-/i.test(payment.reference)
+        ? { reference: payment.reference }
+        : {}),
+    }));
+    // Cash is recorded at the amount applied; print what was handed over.
+    const cash = payments.map((p) => /^cash$/i.test(p.method.trim())).lastIndexOf(true);
+    if (cash >= 0 && (order.change ?? 0) > 0)
+      payments[cash] = { ...payments[cash]!, amount: payments[cash]!.amount + order.change! };
+    const applied =
+      order.paid ??
+      payments.reduce((total, payment) => total + payment.amount, 0) - (order.change ?? 0);
+    return renderApprovedReceipt(
+      {
+        business,
+        receiptNumber: order.receiptNumber ?? `RCPT ${cleanOrderId(order.orderId)}`,
+        date: issued.date,
+        time: issued.time,
+        customer,
+        ...(table ? { table } : {}),
+        lines,
+        totals,
+        payments,
+        ...(order.change ? { change: order.change } : {}),
+        paid: applied,
+        ...(order.loyaltySummary ? { loyalty: order.loyaltySummary } : {}),
+        ...(order.etims ? { etims: order.etims } : {}),
+      },
+      ctx,
+    );
+  }
+
+  const till = set(order.tillNumber) ?? set(identity.tillNumber);
+  const bank = [identity.bankName, identity.bankAccountName, identity.bankAccountNumber]
+    .map(set)
+    .filter((value): value is string => Boolean(value));
+  // Instructions that only repeat the till printed above are dropped.
+  const instructions = identity.paymentInstructions.filter(
+    (line) => set(line) && !(till && line.includes(till)),
+  );
+  const deliverTo = (order.deliveryDetails ?? [])
+    .map((detail) =>
+      [detail.recipientName, detail.phone, detail.address, detail.doorNumber]
+        .map((value) => set(value))
+        .filter(Boolean)
+        .join(", "),
+    )
+    .filter(Boolean)
+    .join("; ");
+  return renderApprovedInvoice(
+    {
+      business,
+      invoiceNumber: order.invoiceNumber ?? `INV ${cleanOrderId(order.orderId)}`,
+      date: issued.date,
+      time: issued.time,
+      customer,
+      ...(table ? { table } : {}),
+      ...(deliverTo ? { deliverTo } : {}),
+      lines,
+      totals,
+      paid: order.paid ?? 0,
+      // The scan-to-pay QR is the one Safaricom issued for this bill (see
+      // server/print-payment-qr.ts); without it the till prints alone and says so.
+      ...(till
+        ? {
+            mpesa: {
+              till,
+              ...(order.mpesaQrModules?.length ? { qrModules: order.mpesaQrModules } : {}),
+            },
+          }
+        : {}),
+      paymentInstructions: till
+        ? instructions
+        : [...(bank.length ? [bank.join(", ")] : []), ...instructions],
+    },
+    ctx,
+    documentType === "BILL" ? "BILL" : "TAX_INVOICE",
+  );
 }
 
 /** Kitchen and bar tickets on the shared table templates. */
@@ -1288,6 +1558,9 @@ function renderCustomerDocument(
   // legacy layout until the templates format by currency.
   const currency = profile.printIdentity.currency ?? activeCurrency();
   if (minorDigits(currency) === 2) {
+    // Thermal paper prints the approved invoice and receipt; A4 keeps the tax invoice.
+    if (template.width !== "A4")
+      return renderApprovedCustomerDocument(documentType, order, template, profile, template.width);
     return renderTableDocument(documentType, order, template, profile, template.width);
   }
   if (template.width === "A4") {

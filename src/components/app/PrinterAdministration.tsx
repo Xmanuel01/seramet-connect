@@ -970,9 +970,7 @@ export function PrinterAdministration() {
                     }}
                   >
                     <option value="TEXT_ESC_POS">Text (works on most printers)</option>
-                    <option value="RASTER_ESC_POS" disabled={draft.transport !== "TCP"}>
-                      Image (network printers only)
-                    </option>
+                    <option value="RASTER_ESC_POS">Image (approved typeset layouts)</option>
                   </select>
                 </label>
                 {draft.renderingMode !== "RASTER_ESC_POS" && (
@@ -1126,7 +1124,7 @@ export function PrinterAdministration() {
                           <Printer className="h-4 w-4" />
                           Test text print
                         </Btn>
-                        {printer.transport === "TCP" && printer.raster && (
+                        {printer.raster && (
                           <Btn
                             disabled={busy || !printer.enabled}
                             onClick={() => void testPrinter(printer, "BILL", "RASTER_ESC_POS")}

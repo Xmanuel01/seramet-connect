@@ -1,337 +1,362 @@
-import { useMemo, useState, type FormEvent } from "react";
-import { Copy, PlugZap, Save } from "lucide-react";
-import { Btn, Panel, PanelHead, Status } from "@/components/app/ui";
+import { useEffect, useMemo, useState } from "react";
+import { Link2 } from "lucide-react";
+import { Btn, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { useAppContext } from "@/lib/app-context";
-import { permissions } from "@/platform/permissions";
-import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import type { useSetupCentre } from "@/onboarding/use-setup-centre";
-import { uberConnectionId, uberWebhookUrl } from "@/lib/uber-eats-connection";
 
-type Centre = ReturnType<typeof useSetupCentre>;
-const providerId = "provider-delivery-uber-eats";
-const inputClass = "h-10 w-full min-w-0 rounded-md border border-border bg-card px-3 text-[13px]";
-const labelClass = "grid gap-1 text-[13px] font-semibold";
+const uberProviderId = "provider-delivery-uber-eats";
+const inputClass =
+  "h-10 w-full rounded-md border border-border bg-card px-3 text-[13px] text-foreground outline-none focus:border-primary";
+const labelClass = "grid min-w-0 gap-1.5 text-[12px] font-semibold text-muted-foreground";
 
-/** Turns a connection test result into words an owner can act on. */
-function testOutcome(health: { status: string; message?: string }) {
-  if (health.status === "HEALTHY") return undefined;
-  if (health.status === "AUTH_ERROR")
-    return "Uber didn't accept the client ID or secret. Check they belong to the chosen mode (testing or live).";
-  if (health.status === "OFFLINE" || /fetch failed|network|timed? ?out/i.test(health.message ?? ""))
-    return "Couldn't reach Uber. Check the internet connection, then test again.";
-  return health.message ?? "The test didn't pass. Check the details and try again.";
-}
+type StoreChoice = { storeId: string; name: string; address?: string };
+type Environment = "SANDBOX" | "PRODUCTION";
 
-const statusLabels: Record<string, string> = {
-  SANDBOX: "Connected (testing)",
-  ACTIVE: "Connected (live)",
-  CONFIGURED: "Saved, not tested",
-  CREDENTIALS_REQUIRED: "Credentials missing",
-  AUTH_ERROR: "Uber rejected the credentials",
-  DEGRADED: "Connected with problems",
-  ERROR: "Can't reach Uber",
-  DISABLED: "Turned off",
+const signInErrors: Record<string, string> = {
+  expired: "The Uber sign-in took too long or was started elsewhere. Start again.",
+  declined: "Uber sign-in was cancelled.",
+  config: "Uber Eats is not switched on for this server yet.",
+  uber: "Uber did not finish the sign-in. Try again in a moment.",
+  scope:
+    "Uber did not give Seramet permission to manage stores (eats.pos_provisioning). Uber has to enable it for the Seramet app.",
 };
 
 /**
- * Connects a branch to its Uber Eats store: Uber app credentials (stored
- * encrypted), the Uber store ID, the order channel orders arrive on, then a
- * live test against Uber. Shows the webhook address to paste into Uber.
+ * Links a branch to its Uber Eats store: the owner signs in to Uber, picks the store, and Uber
+ * then sends that store's orders to Seramet. No Uber keys are typed by the restaurant.
  */
-export function UberEatsConnect({ centre }: { centre: Centre }) {
-  const { activeTenantId, hasPermission, switchableBranchRecords } = useAppContext();
-  const canManage = hasPermission(permissions.settingsIntegrationManage);
-  const allowed = switchableBranchRecords.map((branch) => branch.id);
-  const branches = centre.structure.branches.filter(
-    (branch) => branch.active && allowed.includes(branch.id),
-  );
+export function UberEatsConnect({ centre }: { centre: ReturnType<typeof useSetupCentre> }) {
+  const { platformState, activeTenantId } = useAppContext();
+  const branches = centre.structure.branches;
   const channels = useMemo(
     () =>
-      getConfigurationRepository()
-        .listOrderChannels(activeTenantId, true)
-        .filter((channel) => channel.enabled),
-    [activeTenantId],
+      platformState.orderChannels
+        .filter(
+          (channel) =>
+            channel.tenantId === activeTenantId &&
+            channel.enabled &&
+            channel.channelType === "MARKETPLACE",
+        )
+        .sort((a, b) => a.sortOrder - b.sortOrder),
+    [activeTenantId, platformState.orderChannels],
   );
-  const defaultChannel =
-    channels.find((channel) => channel.channelType === "MARKETPLACE")?.id ?? channels[0]?.id ?? "";
-  const connections = centre.integrations.filter(
-    (item) => item.providerId === providerId && item.branchId && allowed.includes(item.branchId),
-  );
-  const [form, setForm] = useState({
-    branchId: "",
-    environment: "SANDBOX" as "SANDBOX" | "PRODUCTION",
-    storeId: "",
-    clientId: "",
-    clientSecret: "",
-    signingSecret: "",
-    channelId: "",
-  });
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
-  const [webhooks, setWebhooks] = useState<Record<string, string>>({});
-  const existing = connections.find((item) => item.branchId === form.branchId);
-  const branchName = (id?: string) => branches.find((branch) => branch.id === id)?.name ?? id;
-
-  async function test(connectionId: string) {
-    // command() reloads Setup Centre afterwards, so the connection status updates.
-    const result = await centre.command<{ health: { status: string; message?: string } }>(
-      `/api/seramet/integrations/connections/${encodeURIComponent(connectionId)}/test`,
-      {},
+  const connections = centre.integrations.filter((row) => row.providerId === uberProviderId);
+  // Each linked Uber store is its own connection; its store mapping carries the store's name.
+  const storeName = (connectionId: string) => {
+    const mapping = centre.mappings.find(
+      (row) => row["connectionId"] === connectionId && row["resourceType"] === "STORE",
     );
-    return result.health;
-  }
+    const metadata = (mapping?.["metadata"] ?? {}) as Record<string, unknown>;
+    return typeof metadata["displayName"] === "string"
+      ? metadata["displayName"]
+      : typeof mapping?.["externalId"] === "string"
+        ? mapping["externalId"]
+        : "Uber store";
+  };
+  const [linkedThisSignIn, setLinkedThisSignIn] = useState<string[]>([]);
+  const [branchId, setBranchId] = useState("");
+  const [environment, setEnvironment] = useState<Environment>("SANDBOX");
+  const [orderChannelId, setOrderChannelId] = useState("");
+  const [ticket, setTicket] = useState("");
+  const [stores, setStores] = useState<StoreChoice[]>([]);
+  const [storeId, setStoreId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ tone: "error" | "ok"; text: string } | null>(null);
 
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    if (busy || !canManage || !form.branchId) return;
-    const channelId = form.channelId || defaultChannel;
-    if (!channelId) {
-      setNotice({
-        kind: "error",
-        text: "Add a Delivery apps order channel first (Setup Centre, Channels).",
-      });
-      return;
+  useEffect(() => {
+    if (!branchId && branches[0]) setBranchId(branches[0].id);
+  }, [branchId, branches]);
+  useEffect(() => {
+    if (!orderChannelId) {
+      const uber = channels.find((channel) => /uber/i.test(channel.displayName));
+      if (uber) setOrderChannelId(uber.id);
     }
-    if (!existing && (!form.clientId.trim() || !form.clientSecret.trim())) {
-      setNotice({ kind: "error", text: "Enter the client ID and client secret from Uber." });
+  }, [channels, orderChannelId]);
+
+  // Uber's redirect returns here with the sealed sign-in in the URL fragment. It is read once
+  // and removed from the address bar so it is not kept in history or shared by copy and paste.
+  useEffect(() => {
+    const hash = new URLSearchParams(window.location.hash.slice(1));
+    const sealed = hash.get("uberLink");
+    const error = hash.get("uberError");
+    if (!sealed && !error) return;
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    if (error) {
+      setMessage({ tone: "error", text: signInErrors[error] ?? signInErrors.uber! });
       return;
     }
     setBusy(true);
-    setNotice(null);
-    const connectionId = existing?.connectionId ?? uberConnectionId(form.branchId);
+    centre
+      .send<{
+        stores: StoreChoice[];
+        branchId: string;
+        environment: Environment;
+        orderChannelId?: string;
+      }>("/api/seramet/setup/uber-eats/stores", { ticket: sealed })
+      .then((result) => {
+        setTicket(sealed!);
+        setStores(result.stores);
+        setStoreId(result.stores.length === 1 ? result.stores[0]!.storeId : "");
+        setBranchId(result.branchId);
+        setEnvironment(result.environment);
+        if (result.orderChannelId) setOrderChannelId(result.orderChannelId);
+        setMessage(null);
+      })
+      .catch((reason: unknown) =>
+        setMessage({
+          tone: "error",
+          text: reason instanceof Error ? reason.message : String(reason),
+        }),
+      )
+      .finally(() => setBusy(false));
+    // Runs once on arrival; `centre.send` is stable for the session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const signIn = async () => {
+    setBusy(true);
+    setMessage(null);
+    setLinkedThisSignIn([]);
     try {
-      const credentials = Object.fromEntries(
-        Object.entries({
-          clientId: form.clientId.trim(),
-          clientSecret: form.clientSecret.trim(),
-          webhookSigningSecret: form.signingSecret.trim(),
-        }).filter(([, value]) => value),
-      );
-      const saved = await centre.send<{ connection: { callbackUrl?: string } }>(
-        "/api/seramet/setup/provider-connections",
+      const result = await centre.send<{ url: string }>("/api/seramet/setup/uber-eats/authorize", {
+        branchId,
+        environment,
+        ...(orderChannelId ? { orderChannelId } : {}),
+      });
+      window.location.assign(result.url);
+    } catch (reason) {
+      setMessage({
+        tone: "error",
+        text: reason instanceof Error ? reason.message : String(reason),
+      });
+      setBusy(false);
+    }
+  };
+
+  const link = async () => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await centre.send<{ store: StoreChoice; settingsWarning?: string }>(
+        "/api/seramet/setup/uber-eats/link",
         {
-          id: connectionId,
-          providerId,
-          branchId: form.branchId,
-          environment: form.environment,
-          enabled: true,
-          configuration: { orderChannelId: channelId },
-          ...(Object.keys(credentials).length ? { credentials } : {}),
+          ticket,
+          storeId,
+          ...(orderChannelId ? { orderChannelId } : {}),
         },
       );
-      if (form.storeId.trim())
-        await centre.send("/api/seramet/integrations/mappings", {
-          connectionId,
-          branchId: form.branchId,
-          resourceType: "STORE",
-          internalId: form.branchId,
-          externalId: form.storeId.trim(),
-          status: "MAPPED",
-        });
-      setWebhooks((current) => ({
-        ...current,
-        [connectionId]:
-          saved.connection.callbackUrl ?? uberWebhookUrl(connectionId, window.location.origin),
-      }));
-      setForm((current) => ({ ...current, clientSecret: "", signingSecret: "" }));
-      const health = await test(connectionId);
-      setNotice(
-        health.status === "HEALTHY"
-          ? {
-              kind: "ok",
-              text: `Connected to Uber Eats for ${branchName(form.branchId)}. Paste the webhook address below into your Uber app.`,
-            }
-          : { kind: "error", text: `Saved, but the test didn't pass. ${testOutcome(health)}` },
-      );
-    } catch (error) {
-      setForm((current) => ({ ...current, clientSecret: "", signingSecret: "" }));
-      setNotice({
-        kind: "error",
-        text: error instanceof Error ? error.message : "Couldn't save the Uber Eats connection.",
+      // The Uber sign-in stays open so further stores of the same account can be linked to
+      // this branch (a branch can run several Uber storefronts) without signing in again.
+      const remaining = stores.filter((row) => row.storeId !== result.store.storeId);
+      setStores(remaining);
+      setStoreId(remaining.length === 1 ? remaining[0]!.storeId : "");
+      setLinkedThisSignIn((current) => [...current, result.store.name]);
+      if (stores.length > 0 && remaining.length === 0) setTicket("");
+      setMessage({
+        tone: "ok",
+        text: `${result.store.name} is linked. New Uber orders for it come here.${
+          result.settingsWarning
+            ? ` Uber did not switch on all order settings yet (${result.settingsWarning}); Seramet support can retry this.`
+            : ""
+        }${
+          remaining.length || stores.length === 0
+            ? " You can link another store for this branch now."
+            : ""
+        }`,
+      });
+      await centre.refresh();
+    } catch (reason) {
+      setMessage({
+        tone: "error",
+        text: reason instanceof Error ? reason.message : String(reason),
       });
     } finally {
       setBusy(false);
     }
-  }
+  };
 
-  async function retest(connectionId: string) {
-    setBusy(true);
-    setNotice(null);
-    try {
-      const health = await test(connectionId);
-      setNotice(
-        health.status === "HEALTHY"
-          ? { kind: "ok", text: "Uber Eats answered. The connection works." }
-          : { kind: "error", text: testOutcome(health)! },
-      );
-    } catch (error) {
-      setNotice({
-        kind: "error",
-        text: error instanceof Error ? error.message : "The test couldn't run.",
-      });
-    } finally {
-      setBusy(false);
-    }
-  }
+  // Signed in to Uber and waiting for the store choice (or, when Uber listed none, its id).
+  const choosing = Boolean(ticket);
+  const branchName = (id?: string) =>
+    branches.find((branch) => branch.id === id)?.name ?? id ?? "All branches";
 
   return (
-    <Panel>
-      <PanelHead
-        title="Uber Eats"
-        sub="Receive Uber Eats orders on your tills and kitchen screens."
-        right={<PlugZap className="h-4 w-4 text-primary" />}
-      />
-      <div className="space-y-4 p-4 text-[13px]">
-        {connections.map((item) => {
-          const webhook =
-            webhooks[item.connectionId] ??
-            uberWebhookUrl(item.connectionId, window.location.origin);
-          return (
-            <div key={item.connectionId} className="space-y-2 rounded-lg border border-border p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="font-semibold">
-                  {branchName(item.branchId)} ·{" "}
-                  {item.environment === "SANDBOX" ? "Testing" : "Live"}
-                </span>
-                <Status>{statusLabels[item.status] ?? item.status}</Status>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-muted-foreground">Webhook address for Uber:</span>
-                <code className="break-all rounded bg-secondary px-2 py-1 text-[12px]">
-                  {webhook}
-                </code>
-                <Btn
-                  onClick={() => void navigator.clipboard?.writeText(webhook)}
-                  title="Copy webhook address"
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+      <Panel>
+        <PanelHead
+          title="Uber Eats"
+          sub={`${connections.length} linked`}
+          right={<Link2 className="h-4 w-4 text-muted-foreground" />}
+        />
+        {connections.length === 0 ? (
+          <p className="p-4 text-[13px] text-muted-foreground">
+            No Uber Eats store linked yet. Sign in to Uber with the account that manages your store,
+            then choose the store. A branch with several Uber storefronts links each one.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px]">
+              <thead>
+                <tr>
+                  <TH>Uber store</TH>
+                  <TH>Branch</TH>
+                  <TH>Mode</TH>
+                  <TH>Status</TH>
+                  <TH>Health</TH>
+                </tr>
+              </thead>
+              <tbody>
+                {connections.map((row) => (
+                  <tr key={row.connectionId}>
+                    <TD>{storeName(row.connectionId)}</TD>
+                    <TD>{branchName(row.branchId)}</TD>
+                    <TD>{row.environment === "SANDBOX" ? "Testing" : "Live"}</TD>
+                    <TD>
+                      <Status>{row.status}</Status>
+                    </TD>
+                    <TD>
+                      <Status>{row.health}</Status>
+                    </TD>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
+      <Panel>
+        <PanelHead
+          title={choosing ? "Choose your Uber store" : "Link an Uber Eats store"}
+          sub={environment === "SANDBOX" ? "Testing: Uber test stores only" : "Live orders"}
+        />
+        <div className="grid gap-3 p-4">
+          {choosing && !stores.length ? (
+            <>
+              <label className={labelClass}>
+                Uber store ID
+                <input
+                  value={storeId}
+                  onChange={(event) => setStoreId(event.target.value.trim())}
+                  className={inputClass}
+                  placeholder="e.g. 1d2b3c4e-5f6a-7890-ab12-c3d4e5f67890"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+              <p className="text-[12px] text-muted-foreground">
+                Uber signed you in but listed no stores for this account. Enter the store ID from
+                Uber&apos;s store details; Uber only accepts a store this account manages.
+              </p>
+            </>
+          ) : choosing ? (
+            <label className={labelClass}>
+              Uber store
+              <select
+                value={storeId}
+                onChange={(event) => setStoreId(event.target.value)}
+                className={inputClass}
+              >
+                <option value="">Select the store</option>
+                {stores.map((store) => (
+                  <option key={store.storeId} value={store.storeId}>
+                    {store.name}
+                    {store.address ? ` - ${store.address}` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <>
+              <label className={labelClass}>
+                Branch
+                <select
+                  value={branchId}
+                  onChange={(event) => setBranchId(event.target.value)}
+                  className={inputClass}
                 >
-                  <Copy className="h-4 w-4" />
-                </Btn>
-              </div>
-              {canManage && (
-                <Btn disabled={busy} onClick={() => void retest(item.connectionId)}>
-                  Test connection
-                </Btn>
-              )}
-            </div>
-          );
-        })}
-        {canManage ? (
-          <form onSubmit={(event) => void submit(event)} className="grid gap-3 md:grid-cols-2">
-            <label className={labelClass}>
-              Branch
-              <select
-                required
-                className={inputClass}
-                value={form.branchId}
-                onChange={(event) => setForm({ ...form, branchId: event.target.value })}
-              >
-                <option value="">Select branch</option>
-                {branches.map((branch) => (
-                  <option key={branch.id} value={branch.id}>
-                    {branch.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className={labelClass}>
-              Mode
-              <select
-                className={inputClass}
-                value={form.environment}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    environment: event.target.value as "SANDBOX" | "PRODUCTION",
-                  })
-                }
-              >
-                <option value="SANDBOX">Testing (Uber sandbox)</option>
-                <option value="PRODUCTION">Live orders</option>
-              </select>
-            </label>
-            <label className={labelClass}>
-              Uber store ID
-              <input
-                className={inputClass}
-                value={form.storeId}
-                required={!existing}
-                autoComplete="off"
-                placeholder="From Uber: your store's UUID"
-                onChange={(event) => setForm({ ...form, storeId: event.target.value })}
-              />
-            </label>
-            <label className={labelClass}>
-              Orders arrive as
-              <select
-                className={inputClass}
-                value={form.channelId || defaultChannel}
-                onChange={(event) => setForm({ ...form, channelId: event.target.value })}
-              >
-                {channels.map((channel) => (
-                  <option key={channel.id} value={channel.id}>
-                    {channel.displayName}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className={labelClass}>
-              Client ID
-              <input
-                className={inputClass}
-                value={form.clientId}
-                required={!existing}
-                autoComplete="off"
-                onChange={(event) => setForm({ ...form, clientId: event.target.value })}
-              />
-            </label>
-            <label className={labelClass}>
-              Client secret
-              <input
-                className={inputClass}
-                type="password"
-                value={form.clientSecret}
-                required={!existing}
-                autoComplete="new-password"
-                onChange={(event) => setForm({ ...form, clientSecret: event.target.value })}
-              />
-            </label>
-            <label className={`${labelClass} md:col-span-2`}>
-              Webhook signing key (optional)
-              <input
-                className={inputClass}
-                type="password"
-                value={form.signingSecret}
-                autoComplete="new-password"
-                placeholder="Leave blank if Uber signs webhooks with your client secret"
-                onChange={(event) => setForm({ ...form, signingSecret: event.target.value })}
-              />
-            </label>
-            <p className="text-[12px] text-muted-foreground md:col-span-2">
-              Find these in the Uber developer dashboard under your app. Secrets are stored
-              encrypted and are never shown again.
-              {existing && " Leave a field blank to keep what is saved."}
+                  {branches.map((branch) => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className={labelClass}>
+                Mode
+                <select
+                  value={environment}
+                  onChange={(event) => setEnvironment(event.target.value as Environment)}
+                  className={inputClass}
+                >
+                  <option value="SANDBOX">Testing (Uber test store)</option>
+                  <option value="PRODUCTION">Live</option>
+                </select>
+              </label>
+            </>
+          )}
+          <label className={labelClass}>
+            Order channel for Uber orders
+            <select
+              value={orderChannelId}
+              onChange={(event) => setOrderChannelId(event.target.value)}
+              className={inputClass}
+            >
+              <option value="">Select the delivery-app channel</option>
+              {channels.map((channel) => (
+                <option key={channel.id} value={channel.id}>
+                  {channel.displayName}
+                </option>
+              ))}
+            </select>
+          </label>
+          {!channels.length && (
+            <p className="text-[12px] text-muted-foreground">
+              Add Uber Eats as a delivery-app order channel in Settings first.
             </p>
-            <div className="md:col-span-2">
-              <Btn type="submit" variant="primary" disabled={busy || !form.branchId}>
-                <Save className="h-4 w-4" />
-                {busy ? "Connecting..." : existing ? "Save and test again" : "Connect and test"}
+          )}
+          {message && (
+            <p
+              role={message.tone === "error" ? "alert" : "status"}
+              className={
+                message.tone === "error" ? "text-[13px] text-danger" : "text-[13px] text-success"
+              }
+            >
+              {message.text}
+            </p>
+          )}
+          {choosing ? (
+            <div className="flex flex-wrap gap-2">
+              <Btn
+                variant="primary"
+                disabled={busy || !storeId || !orderChannelId}
+                onClick={() => void link()}
+              >
+                Link store
+              </Btn>
+              <Btn
+                variant="ghost"
+                disabled={busy}
+                onClick={() => {
+                  setStores([]);
+                  setTicket("");
+                  setStoreId("");
+                  setLinkedThisSignIn([]);
+                }}
+              >
+                {linkedThisSignIn.length ? "Done" : "Cancel"}
               </Btn>
             </div>
-          </form>
-        ) : (
-          <p className="text-muted-foreground">
-            Ask someone with integration-management rights to connect Uber Eats.
-          </p>
-        )}
-        {notice && (
-          <p
-            role={notice.kind === "error" ? "alert" : "status"}
-            className={notice.kind === "error" ? "text-danger" : "text-success"}
-          >
-            {notice.text}
-          </p>
-        )}
-      </div>
-    </Panel>
+          ) : (
+            <Btn
+              variant="primary"
+              disabled={busy || !branchId || !orderChannelId}
+              onClick={() => void signIn()}
+            >
+              Sign in to Uber
+            </Btn>
+          )}
+        </div>
+      </Panel>
+    </div>
   );
 }
