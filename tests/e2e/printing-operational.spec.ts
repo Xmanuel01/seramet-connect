@@ -479,13 +479,31 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     await manager.getByRole("button", { name: "Print invoice", exact: true }).click();
     const verifyPreviewFit = async (page: typeof manager, title: string) => {
       const preview = page.getByTestId("document-preview");
-      await expect(preview).toContainText(title);
+      await expect(preview).toBeVisible();
+      const drawn = preview.locator("canvas");
+      if (await drawn.count()) {
+        // Approved layouts preview as the bitmap an image-mode printer receives: check the
+        // sheet was drawn with ink on it (the title is pixels, not text).
+        await expect
+          .poll(() =>
+            drawn.evaluate((canvas: HTMLCanvasElement) => {
+              const context = canvas.getContext("2d");
+              if (!context || canvas.width === 0 || canvas.height === 0) return false;
+              const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+              for (let i = 0; i < pixels.length; i += 4) if (pixels[i] === 0) return true;
+              return false;
+            }),
+          )
+          .toBe(true);
+      } else {
+        await expect(preview).toContainText(title);
+      }
       for (const width of [1280, 390]) {
         await page.setViewportSize({ width, height: 900 });
         await expect
           .poll(() =>
             preview.evaluate((element) => {
-              const paper = element.querySelector("pre")!.getBoundingClientRect();
+              const paper = element.querySelector("pre, canvas")!.getBoundingClientRect();
               const box = element.getBoundingClientRect();
               return (
                 paper.left >= box.left - 1 &&
