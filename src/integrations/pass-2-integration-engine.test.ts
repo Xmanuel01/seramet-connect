@@ -1915,3 +1915,43 @@ function systemActorForTest() {
     role: "System",
   } as unknown as Parameters<TransactionRepository["saveState"]>[1];
 }
+
+describe("marketplace store lifecycle webhooks", () => {
+  function storeEvent(eventId: string, eventType: "STORE_CONNECTED" | "STORE_DISCONNECTED") {
+    return {
+      ...webhook(order(), eventId, eventType),
+      rawBody: new TextEncoder().encode(
+        JSON.stringify({
+          eventId,
+          eventType,
+          resourceId: externalStoreId,
+          storeId: externalStoreId,
+        }),
+      ),
+    };
+  }
+
+  it("records a provisioned store and retires the mapping when the store is deprovisioned", async () => {
+    const f = fixture();
+    await f.ready;
+    await f.runtime.handleWebhook(storeEvent("store-on", "STORE_CONNECTED"));
+    let store = (await f.repository.listMappings(DEMO_TENANT_ID, connectionId)).find(
+      (row) => row.resourceType === "STORE",
+    );
+    expect(store).toMatchObject({
+      status: "MAPPED",
+      metadata: { providerLink: { state: "PROVISIONED" } },
+    });
+
+    await f.runtime.handleWebhook(storeEvent("store-off", "STORE_DISCONNECTED"));
+    const duplicate = await f.runtime.handleWebhook(storeEvent("store-off", "STORE_DISCONNECTED"));
+    expect(duplicate).toMatchObject({ duplicate: true });
+    store = (await f.repository.listMappings(DEMO_TENANT_ID, connectionId)).find(
+      (row) => row.resourceType === "STORE",
+    );
+    expect(store).toMatchObject({
+      status: "DISABLED",
+      metadata: { providerLink: { state: "DEPROVISIONED" } },
+    });
+  });
+});
