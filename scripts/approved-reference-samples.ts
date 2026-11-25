@@ -106,6 +106,8 @@ export function approvedReferenceSamples(
     subtotal: 2750,
     deliveryCharge: 100,
     tax: 0,
+    // The reference restaurant is zero-rated: a 0% VAT rule is configured.
+    taxRatesBps: [0],
     total: 2850,
     ...(integrations.mpesaQrModules ? { mpesaQrModules: integrations.mpesaQrModules } : {}),
   };
@@ -126,6 +128,7 @@ export function approvedReferenceSamples(
     ],
     subtotal: 1000,
     tax: 0,
+    taxRatesBps: [0],
     total: 1000,
     paid: 1000,
     paymentBreakdown: [{ method: "M-Pesa", amount: 1000, reference: "TKM3QX81ZP" }],
