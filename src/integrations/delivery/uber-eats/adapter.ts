@@ -126,7 +126,9 @@ export function createUberEatsAdapter(
     verifyWebhook: verifyUberWebhook,
     parseWebhook: async (request) => {
       const parsed = parseJson<UberWebhook>(request);
-      if (!parsed.event_id || !parsed.event_type || !parsed.meta?.resource_id)
+      // Store events can name only the store (meta.user_id); order events also name the order.
+      const resourceId = parsed.meta?.resource_id ?? parsed.meta?.user_id;
+      if (!parsed.event_id || !parsed.event_type || !resourceId)
         return failure(
           "VALIDATION",
           "Uber webhook is missing its immutable event or resource identifier",
@@ -137,8 +139,8 @@ export function createUberEatsAdapter(
         value: {
           providerEventId: parsed.event_id,
           eventType,
-          externalResourceId: parsed.meta.resource_id,
-          ...(parsed.meta.user_id ? { externalStoreId: parsed.meta.user_id } : {}),
+          externalResourceId: resourceId,
+          ...(parsed.meta?.user_id ? { externalStoreId: parsed.meta.user_id } : {}),
           ...(parsed.event_time
             ? {
                 occurredAt: new Date(

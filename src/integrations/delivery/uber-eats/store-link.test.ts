@@ -175,6 +175,34 @@ describe("Uber Eats store link", () => {
     });
   });
 
+  it("reads store lists keyed as data[].id and treats an empty list as empty", async () => {
+    const reply = (body: unknown) => async () => new Response(JSON.stringify(body));
+    await expect(
+      listUberStores({
+        fetch: reply({
+          data: [{ id: "store-2", name: "Second", location: { street_address: "2 Road" } }],
+        }),
+        environment: "SANDBOX",
+        accessToken: "merchant",
+      }),
+    ).resolves.toEqual([{ storeId: "store-2", name: "Second", address: "2 Road" }]);
+    await expect(
+      listUberStores({
+        fetch: reply({ stores: [] }),
+        environment: "SANDBOX",
+        accessToken: "merchant",
+      }),
+    ).resolves.toEqual([]);
+    // An empty `stores` list must not hide stores Uber listed under `data`.
+    await expect(
+      listUberStores({
+        fetch: reply({ stores: [], data: [{ id: "store-3", name: "Third" }] }),
+        environment: "SANDBOX",
+        accessToken: "merchant",
+      }),
+    ).resolves.toEqual([{ storeId: "store-3", name: "Third" }]);
+  });
+
   it("reports Uber's refusal to activate a store", async () => {
     const fetch = async () =>
       new Response(JSON.stringify({ message: "store not found" }), { status: 404 });

@@ -197,6 +197,15 @@ export async function exchangeUberAuthorizationCode(input: {
   const body = parseJson<{ access_token?: string; scope?: string }>(await response.text());
   if (!response.ok || !body?.access_token)
     throw new UberLinkError(`Uber sign-in could not be completed (HTTP ${response.status})`);
+  const scopes = body.scope?.split(/\s+/).filter(Boolean) ?? [];
+  // Scope names only: shows whether Uber actually granted provisioning to this sign-in.
+  console.info(
+    JSON.stringify({ event: "uber_sign_in_token", environment: input.environment, scopes }),
+  );
+  if (body.scope !== undefined && !scopes.includes(uberProvisioningScope))
+    throw new UberLinkError(
+      `Uber did not grant ${uberProvisioningScope} to Seramet for this sign-in; ask Uber to enable it for the app`,
+    );
   return body.access_token;
 }
 
@@ -212,20 +221,26 @@ export async function listUberStores(input: {
       headers: { Authorization: `Bearer ${input.accessToken}` },
     },
   );
-  const body = parseJson<{ stores?: unknown[] }>(await response.text());
+  const body = parseJson<Record<string, unknown>>(await response.text());
   if (!response.ok)
     throw new UberLinkError(
       `Uber did not list the stores for this account (HTTP ${response.status})`,
     );
-  return (body?.stores ?? []).flatMap((entry) => {
+  // The Store API has answered as `stores[].store_id` and as `data[].id`; accept either.
+  const lists = [body?.["stores"], body?.["data"], body?.["results"]].filter(Array.isArray);
+  // An empty list under one key must not hide stores listed under another.
+  const rows: unknown[] = lists.find((list) => list.length > 0) ?? [];
+  const stores = (rows as unknown[]).flatMap((entry) => {
     const store = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
-    const storeId = typeof store["store_id"] === "string" ? store["store_id"] : undefined;
+    const storeId = [store["store_id"], store["id"]].find(
+      (value): value is string => typeof value === "string" && Boolean(value.trim()),
+    );
     if (!storeId) return [];
     const location =
       store["location"] && typeof store["location"] === "object"
         ? (store["location"] as Record<string, unknown>)
         : {};
-    const address = [location["address"], location["city"]]
+    const address = [location["address"], location["street_address"], location["city"]]
       .filter((part): part is string => typeof part === "string" && Boolean(part.trim()))
       .join(", ");
     return [
@@ -236,6 +251,18 @@ export async function listUberStores(input: {
       },
     ];
   });
+  if (!stores.length)
+    // Field names and counts only, never values, to see what Uber sent for an empty list.
+    console.warn(
+      JSON.stringify({
+        event: "uber_store_list_empty",
+        environment: input.environment,
+        status: response.status,
+        keys: body ? Object.keys(body).slice(0, 12) : [],
+        rows: rows.length,
+      }),
+    );
+  return stores;
 }
 
 /** Makes Seramet the store's order manager so Uber sends its orders to the webhook. */
