@@ -137,7 +137,7 @@ export function UberEatsConnect({ centre }: { centre: ReturnType<typeof useSetup
     setBusy(true);
     setMessage(null);
     try {
-      const result = await centre.send<{ store: StoreChoice }>(
+      const result = await centre.send<{ store: StoreChoice; settingsWarning?: string }>(
         "/api/seramet/setup/uber-eats/link",
         {
           ticket,
@@ -155,6 +155,10 @@ export function UberEatsConnect({ centre }: { centre: ReturnType<typeof useSetup
       setMessage({
         tone: "ok",
         text: `${result.store.name} is linked. New Uber orders for it come here.${
+          result.settingsWarning
+            ? ` Uber did not switch on all order settings yet (${result.settingsWarning}); Seramet support can retry this.`
+            : ""
+        }${
           remaining.length || stores.length === 0
             ? " You can link another store for this branch now."
             : ""

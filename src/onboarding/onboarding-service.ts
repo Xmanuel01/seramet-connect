@@ -5,6 +5,8 @@ import { parseCsvRows, parseXlsxRows } from "@/lib/menu-import-export";
 import { getProviderRegistry } from "@/integrations/provider-registry";
 import { uberEatsDefinition } from "@/integrations/delivery/uber-eats/adapter";
 import {
+  configureUberStoreIntegration,
+  deprovisionUberStore,
   openUberLinkTicket,
   provisionUberStore,
   signUberLinkState,
@@ -3812,31 +3814,52 @@ export class OnboardingService {
         throw new ServerOperationError("EXTERNAL_SERVICE_UNAVAILABLE", 502, error.message);
       throw error;
     }
-    const connection = await this.configureProviderConnection({
-      id: connectionId,
-      branchId: ticket.branchId,
-      providerId: uberEatsDefinition.id,
-      environment: ticket.environment,
-      secretReference: uberPlatformSecretReference(ticket.environment),
-      displayName: `Uber Eats · ${store.name}`,
-      configuration: {
-        externalStoreId: store.storeId,
-        externalStoreName: store.name,
-        orderChannelId,
-      },
-    });
-    // The new store mapping is saved before any older one is retired, so a failure part-way
-    // leaves the branch with a working store rather than none.
-    await this.configureExternalMapping({
-      connectionId,
-      branchId: ticket.branchId,
-      resourceType: "STORE",
-      internalId: ticket.branchId,
-      externalId: store.storeId,
-      status: "MAPPED",
-      reviewConfirmed: true,
-      metadata: { displayName: store.name, linkedThrough: "UBER_SIGN_IN" },
-    });
+    // Uber has activated the store; if Seramet cannot save the link, the activation is undone
+    // so Uber does not hold the store for a connection that does not exist.
+    let connection: Awaited<ReturnType<OnboardingService["configureProviderConnection"]>>;
+    try {
+      connection = await this.configureProviderConnection({
+        id: connectionId,
+        branchId: ticket.branchId,
+        providerId: uberEatsDefinition.id,
+        environment: ticket.environment,
+        secretReference: uberPlatformSecretReference(ticket.environment),
+        displayName: `Uber Eats · ${store.name}`,
+        configuration: {
+          externalStoreId: store.storeId,
+          externalStoreName: store.name,
+          orderChannelId,
+        },
+      });
+      // The new store mapping is saved before any older one is retired, so a failure part-way
+      // leaves the branch with a working store rather than none.
+      await this.configureExternalMapping({
+        connectionId,
+        branchId: ticket.branchId,
+        resourceType: "STORE",
+        internalId: ticket.branchId,
+        externalId: store.storeId,
+        status: "MAPPED",
+        reviewConfirmed: true,
+        metadata: { displayName: store.name, linkedThrough: "UBER_SIGN_IN" },
+      });
+    } catch (error) {
+      await deprovisionUberStore({
+        fetch: (url, init) => fetch(url, init),
+        environment: ticket.environment,
+        accessToken: ticket.merchantAccessToken,
+        storeId: store.storeId,
+      }).catch((undo: unknown) =>
+        console.warn(
+          JSON.stringify({
+            event: "uber_store_activation_undo_failed",
+            environment: ticket.environment,
+            message: undo instanceof Error ? undo.message : "unknown",
+          }),
+        ),
+      );
+      throw error;
+    }
     // Two restaurants linking the same store at once: the earlier link keeps it.
     const winner = await this.uberStoreOwner(store.storeId, ticket.environment);
     if (
@@ -3850,7 +3873,23 @@ export class OnboardingService {
       throw validation("This Uber store is already linked to another Seramet location");
     }
     await this.attachChannelConnection(orderChannelId, connectionId);
-    return { connection, store };
+    // Order notifications, scheduled orders and customer instructions are switched on with the
+    // app's own token. A refusal keeps the link and tells the owner what is missing.
+    let settingsWarning: string | undefined;
+    const credentials = uberPlatformCredentials(this.env, ticket.environment);
+    try {
+      if (!credentials) throw new UberLinkError("Uber Eats is not switched on for this server");
+      await configureUberStoreIntegration({
+        fetch: (url, init) => fetch(url, init),
+        environment: ticket.environment,
+        clientId: credentials.clientId,
+        clientSecret: credentials.clientSecret,
+        storeId: store.storeId,
+      });
+    } catch (error) {
+      settingsWarning = error instanceof Error ? error.message : "Uber order settings failed";
+    }
+    return { connection, store, ...(settingsWarning ? { settingsWarning } : {}) };
   }
 
   /** The earliest active link of an Uber store, among active restaurants and live connections. */
