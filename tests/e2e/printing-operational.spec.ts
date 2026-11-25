@@ -1068,7 +1068,11 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       Buffer.from(graphical.authorization.payload, "base64url").toString(),
     );
     expect(graphicalJob.profile.renderingMode).toBe("RASTER_ESC_POS");
-    expect(graphicalJob.document.version).toBe(1);
+    // An 80 mm image printer gets the approved typeset receipt (v3 envelope), not the
+    // ruled-text bitmap layout; the text stays in content for text-mode fallbacks.
+    expect(graphicalJob.v).toBe(3);
+    expect(graphicalJob.rich.paper).toBe("80mm");
+    expect(graphicalJob.document).toBeUndefined();
     expect(graphicalJob.content.replace(/\s/g, "")).toContain(receipt.id);
     expect(graphicalJob.content).toContain(receipt.total.toFixed(2));
     expect((await transmit(graphical)).stage).toBe("BYTES_SUBMITTED");
