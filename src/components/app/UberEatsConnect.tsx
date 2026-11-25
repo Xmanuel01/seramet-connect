@@ -41,6 +41,19 @@ export function UberEatsConnect({ centre }: { centre: ReturnType<typeof useSetup
     [activeTenantId, platformState.orderChannels],
   );
   const connections = centre.integrations.filter((row) => row.providerId === uberProviderId);
+  // Each linked Uber store is its own connection; its store mapping carries the store's name.
+  const storeName = (connectionId: string) => {
+    const mapping = centre.mappings.find(
+      (row) => row["connectionId"] === connectionId && row["resourceType"] === "STORE",
+    );
+    const metadata = (mapping?.["metadata"] ?? {}) as Record<string, unknown>;
+    return typeof metadata["displayName"] === "string"
+      ? metadata["displayName"]
+      : typeof mapping?.["externalId"] === "string"
+        ? mapping["externalId"]
+        : "Uber store";
+  };
+  const [linkedThisSignIn, setLinkedThisSignIn] = useState<string[]>([]);
   const [branchId, setBranchId] = useState("");
   const [environment, setEnvironment] = useState<Environment>("SANDBOX");
   const [orderChannelId, setOrderChannelId] = useState("");
@@ -103,6 +116,7 @@ export function UberEatsConnect({ centre }: { centre: ReturnType<typeof useSetup
   const signIn = async () => {
     setBusy(true);
     setMessage(null);
+    setLinkedThisSignIn([]);
     try {
       const result = await centre.send<{ url: string }>("/api/seramet/setup/uber-eats/authorize", {
         branchId,
@@ -131,11 +145,20 @@ export function UberEatsConnect({ centre }: { centre: ReturnType<typeof useSetup
           ...(orderChannelId ? { orderChannelId } : {}),
         },
       );
-      setTicket("");
-      setStores([]);
+      // The Uber sign-in stays open so further stores of the same account can be linked to
+      // this branch (a branch can run several Uber storefronts) without signing in again.
+      const remaining = stores.filter((row) => row.storeId !== result.store.storeId);
+      setStores(remaining);
+      setStoreId(remaining.length === 1 ? remaining[0]!.storeId : "");
+      setLinkedThisSignIn((current) => [...current, result.store.name]);
+      if (stores.length > 0 && remaining.length === 0) setTicket("");
       setMessage({
         tone: "ok",
-        text: `${result.store.name} is linked. New Uber orders come here.`,
+        text: `${result.store.name} is linked. New Uber orders for it come here.${
+          remaining.length || stores.length === 0
+            ? " You can link another store for this branch now."
+            : ""
+        }`,
       });
       await centre.refresh();
     } catch (reason) {
@@ -164,13 +187,14 @@ export function UberEatsConnect({ centre }: { centre: ReturnType<typeof useSetup
         {connections.length === 0 ? (
           <p className="p-4 text-[13px] text-muted-foreground">
             No Uber Eats store linked yet. Sign in to Uber with the account that manages your store,
-            then choose the store.
+            then choose the store. A branch with several Uber storefronts links each one.
           </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[560px]">
               <thead>
                 <tr>
+                  <TH>Uber store</TH>
                   <TH>Branch</TH>
                   <TH>Mode</TH>
                   <TH>Status</TH>
@@ -180,6 +204,7 @@ export function UberEatsConnect({ centre }: { centre: ReturnType<typeof useSetup
               <tbody>
                 {connections.map((row) => (
                   <tr key={row.connectionId}>
+                    <TD>{storeName(row.connectionId)}</TD>
                     <TD>{branchName(row.branchId)}</TD>
                     <TD>{row.environment === "SANDBOX" ? "Testing" : "Live"}</TD>
                     <TD>
@@ -310,9 +335,11 @@ export function UberEatsConnect({ centre }: { centre: ReturnType<typeof useSetup
                 onClick={() => {
                   setStores([]);
                   setTicket("");
+                  setStoreId("");
+                  setLinkedThisSignIn([]);
                 }}
               >
-                Cancel
+                {linkedThisSignIn.length ? "Done" : "Cancel"}
               </Btn>
             </div>
           ) : (
