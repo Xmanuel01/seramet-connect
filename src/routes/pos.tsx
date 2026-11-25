@@ -1570,11 +1570,17 @@ function POS() {
           </div>
         )}
         <div
-          className="relative grid gap-0 lg:min-h-0 lg:flex-1 lg:grid-cols-[var(--pos-category-width)_minmax(0,1fr)_var(--pos-order-width)]"
+          className="relative grid gap-0 lg:min-h-0 lg:flex-1 lg:grid-cols-[var(--pos-category-track)_minmax(0,1fr)_var(--pos-order-track)]"
           style={
             {
               "--pos-category-width": `${categoryPanel.width}px`,
               "--pos-order-width": `${orderPanel.width}px`,
+              // Whatever the saved widths, the menu keeps at least 280px and the order
+              // panel at least 300px, so nothing is pushed off a narrow desktop screen.
+              "--pos-category-track":
+                "max(96px, min(var(--pos-category-width), calc(100% - 280px - 300px)))",
+              "--pos-order-track":
+                "max(300px, min(var(--pos-order-width), calc(100% - var(--pos-category-track) - 280px)))",
             } as CSSProperties
           }
         >
@@ -1583,14 +1589,14 @@ function POS() {
             side="left"
             panel={categoryPanel}
             className="hidden lg:block"
-            style={{ left: "var(--pos-category-width)" }}
+            style={{ left: "var(--pos-category-track)" }}
           />
           <PanelResizeHandle
             label="Resize order panel"
             side="right"
             panel={orderPanel}
             className="hidden lg:block"
-            style={{ left: "calc(100% - var(--pos-order-width))" }}
+            style={{ left: "calc(100% - var(--pos-order-track))" }}
           />
           <nav className="flex gap-1.5 overflow-x-auto border-b border-border bg-card p-2 lg:h-full lg:flex-col lg:overflow-y-auto lg:border-b-0 lg:border-r">
             {posCategories.map((c) => (
