@@ -1,4 +1,9 @@
 import {
+  readStoreMenu,
+  saveStoreMenu,
+  StoreMenuError,
+} from "@/integrations/marketplace/store-menu";
+import {
   exchangeUberAuthorizationCode,
   listUberStores,
   sealUberLinkTicket,
@@ -638,6 +643,43 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
       });
     }
 
+    if (url.pathname === "/api/seramet/integrations/marketplace/store-menu") {
+      if (request.method === "GET") {
+        const actor = await requirePermission(request, env, permissions.integrationsMenuSync);
+        const connectionId = url.searchParams.get("connectionId");
+        if (!connectionId) throw new SerametHttpError(400, "connectionId is required");
+        authorizeMarketplaceConnection(actor, connectionId);
+        if (!env.SERAMET_DB) throw new SerametHttpError(503, "Database unavailable");
+        return json({
+          ok: true,
+          menu: await storeMenuCall(() =>
+            readStoreMenu(env.SERAMET_DB!, actor.tenantId, connectionId),
+          ),
+        });
+      }
+      if (request.method === "POST") {
+        const actor = await requirePermission(request, env, permissions.integrationsMenuSync);
+        const input = await readJson<{ connectionId?: string; itemIds?: unknown }>(request);
+        if (!input.connectionId) throw new SerametHttpError(400, "connectionId is required");
+        authorizeMarketplaceConnection(actor, input.connectionId);
+        if (!env.SERAMET_DB) throw new SerametHttpError(503, "Database unavailable");
+        const itemIds =
+          input.itemIds === null
+            ? null
+            : Array.isArray(input.itemIds) &&
+                input.itemIds.length <= 5000 &&
+                input.itemIds.every((id) => typeof id === "string")
+              ? (input.itemIds as string[])
+              : undefined;
+        if (itemIds === undefined)
+          throw new SerametHttpError(400, "itemIds must be a list of menu item ids, or null");
+        const saved = await storeMenuCall(() =>
+          saveStoreMenu(env.SERAMET_DB!, actor.tenantId, input.connectionId!, itemIds),
+        );
+        return json({ ok: true, ...saved });
+      }
+    }
+
     if (
       url.pathname === "/api/seramet/integrations/marketplace/menu-sync" &&
       request.method === "POST"
@@ -1115,6 +1157,15 @@ async function completeUberSignIn(url: URL, env: SerametEnv) {
     );
     const missingScope = error instanceof Error && error.message.includes("eats.pos_provisioning");
     return back(missingScope ? "uberError=scope" : "uberError=uber");
+  }
+}
+
+async function storeMenuCall<T>(work: () => Promise<T>) {
+  try {
+    return await work();
+  } catch (error) {
+    if (error instanceof StoreMenuError) throw new SerametHttpError(error.status, error.message);
+    throw error;
   }
 }
 

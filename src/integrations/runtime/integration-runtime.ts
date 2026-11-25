@@ -1,3 +1,4 @@
+import { storeMenuCatalog } from "@/integrations/marketplace/store-menu";
 import type { ProviderRegistry } from "@/integrations/provider-registry";
 import type { CredentialResolver } from "@/integrations/runtime/credential-resolver";
 import { IntegrationEventStore } from "@/integrations/runtime/event-store";
@@ -2154,7 +2155,11 @@ export class IntegrationRuntime {
       state: await this.dependencies.transactions.loadState(tenantId),
       mappings,
       externalStoreId: store.externalId,
-      catalog: await this.dependencies.catalog(tenantId, connection.branchId),
+      // A store sells only the items chosen for it (one branch can run several storefronts).
+      catalog: storeMenuCatalog(
+        await this.dependencies.catalog(tenantId, connection.branchId),
+        connection.configuration,
+      ),
       channel: this.dependencies.configuration
         .listOrderChannels(tenantId)
         .find(
