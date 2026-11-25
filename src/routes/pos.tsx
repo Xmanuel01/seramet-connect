@@ -250,6 +250,7 @@ function POS() {
   const [deliveryPhone, setDeliveryPhone] = useState("");
   const [doorNumber, setDoorNumber] = useState("");
   const [deliveryCharge, setDeliveryCharge] = useState<DeliveryCharge>();
+  const deliveryAmountInput = useRef<HTMLInputElement>(null);
   // A delivery-app order typed in by hand: the app's number and any part due on delivery.
   const [appOrderNumber, setAppOrderNumber] = useState("");
   const [dueOnDelivery, setDueOnDelivery] = useState("");
@@ -760,11 +761,13 @@ function POS() {
   const orderBlocked = checkingPrices || missingLines.length > 0;
   // Checked again when an action runs, since a dialog may have been opened before.
   const orderBlockedReason = () =>
-    checkingPrices
-      ? "Checking the latest prices. Try again in a moment."
-      : missingLines.length
-        ? `${missingLines.map((line) => line.name).join(", ")} is no longer on the menu. Remove it first.`
-        : null;
+    deliveryAmountInput.current && !deliveryAmountInput.current.checkValidity()
+      ? "Enter a valid delivery amount before saving the order."
+      : checkingPrices
+        ? "Checking the latest prices. Try again in a moment."
+        : missingLines.length
+          ? `${missingLines.map((line) => line.name).join(", ")} is no longer on the menu. Remove it first.`
+          : null;
   const taxTotals = items.reduce(
     (totals, line) => {
       const rule = line.p.taxRuleId ? pricingRules.get(line.p.taxRuleId) : undefined;
@@ -1873,6 +1876,8 @@ function POS() {
             )}
             {configuredDelivery && (
               <DeliveryChargeFields
+                key={`${activeTenantId}:${branchId}:${selectedChannel?.id}:${activeOrder?.id ?? "new"}`}
+                inputRef={deliveryAmountInput}
                 settings={configuredDelivery}
                 branchId={branchId}
                 currency={tenant.defaultCurrency}
@@ -2152,6 +2157,14 @@ function POS() {
                   <dt>Subtotal</dt>
                   <dd className="num">{formatMoney(subtotal)}</dd>
                 </div>
+                {deliveryAmountMinor > 0 && (
+                  <div className="flex justify-between text-muted-foreground">
+                    <dt>Delivery</dt>
+                    <dd className="num">
+                      {formatMoney(majorFromMinor(deliveryAmountMinor, tenant.defaultCurrency))}
+                    </dd>
+                  </div>
+                )}
                 <div className="flex justify-between text-muted-foreground">
                   <dt>Tax and service</dt>
                   <dd className="num">{formatMoney(tax)}</dd>
@@ -2360,6 +2373,14 @@ function POS() {
                     <dt className="text-muted-foreground">Subtotal</dt>
                     <dd className="num font-semibold">{formatMoney(subtotal)}</dd>
                   </div>
+                  {deliveryAmountMinor > 0 && (
+                    <div className="flex justify-between">
+                      <dt>Delivery</dt>
+                      <dd className="num font-semibold">
+                        {formatMoney(majorFromMinor(deliveryAmountMinor, tenant.defaultCurrency))}
+                      </dd>
+                    </div>
+                  )}
                   <div className="flex justify-between">
                     <dt className="text-muted-foreground">Tax and service</dt>
                     <dd className="num font-semibold">{formatMoney(tax)}</dd>
@@ -2400,6 +2421,14 @@ function POS() {
                 <dt>Subtotal</dt>
                 <dd className="num">{formatMoney(subtotal)}</dd>
               </div>
+              {deliveryAmountMinor > 0 && (
+                <div className="flex justify-between text-muted-foreground">
+                  <dt>Delivery</dt>
+                  <dd className="num">
+                    {formatMoney(majorFromMinor(deliveryAmountMinor, tenant.defaultCurrency))}
+                  </dd>
+                </div>
+              )}
               <div className="flex justify-between text-muted-foreground">
                 <dt>Tax and service</dt>
                 <dd className="num">{formatMoney(tax)}</dd>

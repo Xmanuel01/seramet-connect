@@ -141,6 +141,63 @@ async function movements() {
 }
 
 describe("authoritative invoice recognition", () => {
+  it.each(["RIDER", "BUSINESS"] as const)(
+    "posts %s delivery fees separately from food revenue, once",
+    async (beneficiary) => {
+      const key = beneficiary === "RIDER" ? "DELIVERY_PAYABLE" : "DELIVERY_FEES";
+      const type = beneficiary === "RIDER" ? "LIABILITY" : "INCOME";
+      await db
+        .prepare(
+          "INSERT INTO accounts (tenant_id,id,code,name,account_type,currency,active,payload_json) VALUES (?,'delivery','delivery','Delivery',?,'KES',1,'{}')",
+        )
+        .bind(tenantId, type)
+        .run();
+      await db
+        .prepare(
+          "INSERT INTO setup_account_mappings (tenant_id,id,scope_key,mapping_key,requirement,account_id,status,finance_signoff_status,updated_by,updated_at) VALUES (?,?,'TENANT',?,'REQUIRED','delivery','CONFIGURED','APPROVED',?,?)",
+        )
+        .bind(tenantId, key, key, actor.id, new Date().toISOString())
+        .run();
+      const bill = invoice();
+      bill.subtotal += 150;
+      bill.total += 150;
+      Object.assign(bill.financialComponents!, {
+        deliveryChargeMinor: 15000,
+        deliveryPayableMinor: beneficiary === "RIDER" ? 15000 : 0,
+        totalMinor: 27400,
+      });
+      const state = createEmptyTransactionState(tenantId);
+      state.bills.push(bill);
+      await repo.saveState(state, actor, "Invoice disposable delivery fee");
+      await repo.saveState(await repo.loadState(tenantId), actor, "Retry disposable delivery fee");
+      expect(await movements()).toEqual([
+        { account_id: "delivery", balance: -15000 },
+        { account_id: "receivable", balance: 27400 },
+        { account_id: "revenue", balance: -10000 },
+        { account_id: "service", balance: -1000 },
+        { account_id: "tax", balance: -1400 },
+      ]);
+    },
+  );
+
+  it("does not post a rider fee without the approved payable mapping", async () => {
+    const bill = invoice();
+    bill.subtotal += 150;
+    bill.total += 150;
+    Object.assign(bill.financialComponents!, {
+      deliveryChargeMinor: 15000,
+      deliveryPayableMinor: 15000,
+      totalMinor: 27400,
+    });
+    const state = createEmptyTransactionState(tenantId);
+    state.bills.push(bill);
+    await expect(repo.saveState(state, actor, "Unmapped test fee")).rejects.toThrow(
+      /DELIVERY_PAYABLE/,
+    );
+    expect(await movements()).toEqual([]);
+    expect((await repo.loadState(tenantId)).bills).toHaveLength(0);
+  });
+
   it("posts exact net sales, service and tax against receivables in the invoice transaction", async () => {
     await issued();
     expect(await movements()).toEqual([
