@@ -43,8 +43,10 @@ const restrictedRoleId = `restricted-role-${suffix}`;
 try {
   await assertMigration();
   await seed(firstDb);
-  const firstEnv = environment(firstDb);
-  const secondEnv = environment(secondDb);
+  // One batch per delivery, to certify the batch boundaries; the continuous run that
+  // production uses is certified separately below.
+  const firstEnv = environment(firstDb, "0");
+  const secondEnv = environment(secondDb, "0");
   const first = new OnboardingService(
     firstDb,
     actor(userId, [firstBranchId, secondBranchId]),
@@ -175,6 +177,48 @@ try {
   );
   await assert.rejects(restricted.inspectImport(preview.id), /branch|assignment|permission/i);
 
+  // The production path: one confirmation, each stage saved in a single continuous run, and
+  // a duplicate delivery to a second consumer changes nothing.
+  const runFirstEnv = environment(firstDb);
+  const runSecondEnv = environment(secondDb);
+  const oneStep = await first.previewImport({
+    kind: "MENU",
+    originalName: "one-step.csv",
+    mimeType: "text/csv",
+    bytes: menuCsv("RUN", 41),
+    duplicateStrategy: "CREATE",
+    idempotencyKey: `one-step-${suffix}`,
+    targetMode: "SELECTED_BRANCHES",
+    targetBranchIds: [firstBranchId, secondBranchId],
+  });
+  assert.equal(oneStep.errorCount, 0);
+  await first.commitImport(oneStep.id, oneStep.commitKey, { autoPublish: true });
+  const runCommitJob = await pendingJob("SETUP_IMPORT_COMMIT", oneStep.id);
+  await deliverConcurrently(runCommitJob, runFirstEnv, runSecondEnv);
+  assert.equal(await stagedRows(oneStep.id), 41);
+  assert.equal(await workerCount("SETUP_IMPORT_COMMIT", oneStep.id), 1);
+  assert.equal((await first.importStatus(oneStep.id)).publishStatus, "PUBLISHING");
+  assert.equal(
+    await scalar(
+      "SELECT COUNT(*) count FROM menu_catalog_items WHERE tenant_id=? AND code LIKE 'RUN-%'",
+      tenantId,
+    ),
+    0,
+    "items must not be live before the import is added to the menu",
+  );
+  const runPublishJob = await pendingJob("SETUP_IMPORT_PUBLISH", oneStep.id);
+  await deliverConcurrently(runPublishJob, runFirstEnv, runSecondEnv);
+  await deliverConcurrently(runPublishJob, runFirstEnv, runSecondEnv);
+  assert.equal(await workerCount("SETUP_IMPORT_PUBLISH", oneStep.id), 1);
+  assert.equal((await first.importStatus(oneStep.id)).publishStatus, "PUBLISHED");
+  assert.equal(
+    await scalar(
+      "SELECT COUNT(*) count FROM menu_catalog_items WHERE tenant_id=? AND code LIKE 'RUN-%'",
+      tenantId,
+    ),
+    41,
+  );
+
   // Corrupting a staged activation proves the publication guard fails closed with no live rows.
   const guarded = await first.previewImport({
     kind: "MENU",
@@ -239,9 +283,10 @@ try {
   await Promise.all([firstDb.close(), secondDb.close()]);
 }
 
-function environment(db: PostgresD1Database): SerametEnv {
+function environment(db: PostgresD1Database, importRunBudgetMs?: string): SerametEnv {
   return {
     SERAMET_ENVIRONMENT: "test",
+    ...(importRunBudgetMs === undefined ? {} : { SERAMET_IMPORT_RUN_BUDGET_MS: importRunBudgetMs }),
     SERAMET_DB: db,
     SERAMET_WORK_QUEUE: { async send() {} },
     SERAMET_MALWARE_SCANNER: {

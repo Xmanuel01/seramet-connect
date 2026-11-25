@@ -1,11 +1,15 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { DeliverySettingsDialog } from "@/delivery/DeliverySettingsDialog";
+import { PayoutAccountsDialog } from "@/components/app/PayoutAccountsDialog";
+import type { PayoutAccounts } from "@/payments/payout-accounts";
+import type { DeliverySettings } from "@/delivery/delivery-charge";
 import { ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Panel, PanelHead, Status } from "@/components/app/ui";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { useAppContext } from "@/lib/app-context";
-import { StaffRolePreset } from "@/components/app/StaffRolePreset";
+import { RoleAccessEditor } from "@/components/app/RoleAccessEditor";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { cn } from "@/lib/utils";
 import {
@@ -79,6 +83,7 @@ function Settings() {
   const [configSaving, setConfigSaving] = useState("");
   const [selectedAccessRoleId, setSelectedAccessRoleId] = useState(roleRecords[0]?.id ?? "");
   const [accessSaving, setAccessSaving] = useState(false);
+  const [accessDraftPending, setAccessDraftPending] = useState(false);
   const tenantUsers = platformState.users.filter(
     (user) => user.tenantId === activeTenantId && user.active,
   );
@@ -276,7 +281,13 @@ function Settings() {
   const updateConfiguredChannel = async (
     channelId: string,
     displayName: string,
-    change: { enabled?: boolean; useOnlinePrice?: boolean; requiresTable?: boolean },
+    change: {
+      enabled?: boolean;
+      useOnlinePrice?: boolean;
+      requiresTable?: boolean;
+      deliverySettings?: DeliverySettings;
+      payoutAccounts?: PayoutAccounts;
+    },
   ) => {
     setConfigSaving(`channel-update:${channelId}`);
     try {
@@ -286,11 +297,13 @@ function Settings() {
         { ...change, reason: "Updated from Settings order channels" },
       );
       setConfigNotice({ kind: "success", message: `${displayName} was updated.` });
+      return true;
     } catch (error) {
       setConfigNotice({
         kind: "error",
         message: error instanceof Error ? error.message : "Order channel update failed.",
       });
+      return false;
     } finally {
       setConfigSaving("");
     }
@@ -328,6 +341,22 @@ function Settings() {
     const nextPermissions = roleRecord.permissions.includes(permission)
       ? roleRecord.permissions.filter((item) => item !== permission)
       : [...roleRecord.permissions, permission];
+    await saveRolePermissions(
+      roleId,
+      nextPermissions,
+      `Module access matrix updated for ${roleRecord.name}`,
+      roleRecord.permissions,
+    );
+  };
+
+  const saveRolePermissions = async (
+    roleId: string,
+    nextPermissions: string[],
+    reason: string,
+    basePermissions: string[],
+  ) => {
+    const roleRecord = roleRecords.find((role) => role.id === roleId);
+    if (!roleRecord || accessSaving) return false;
     const token = getSerametAccessToken();
     setAccessSaving(true);
     try {
@@ -341,25 +370,32 @@ function Settings() {
             "x-seramet-tenant-id": activeTenantId,
             "x-seramet-user-id": currentUser.id,
           },
-          body: JSON.stringify({
-            permissions: nextPermissions,
-            reason: `Module access matrix updated for ${roleRecord.name}`,
-          }),
+          body: JSON.stringify({ permissions: nextPermissions, reason, basePermissions }),
         },
       );
       const payload = (await response.json().catch(() => ({}))) as { message?: string };
       if (!response.ok)
         throw new Error(payload.message ?? `Access update failed (${response.status})`);
-      await refreshAccess();
-      setConfigNotice({
-        kind: "success",
-        message: `${roleRecord.name} permissions were updated and active access was refreshed.`,
-      });
+      // The server has saved it; a failed refresh only means this page shows it late.
+      try {
+        await refreshAccess();
+        setConfigNotice({
+          kind: "success",
+          message: `${roleRecord.name} access was saved and is active now.`,
+        });
+      } catch {
+        setConfigNotice({
+          kind: "success",
+          message: `${roleRecord.name} access was saved. Reload the page to see it here.`,
+        });
+      }
+      return true;
     } catch (error) {
       setConfigNotice({
         kind: "error",
         message: error instanceof Error ? error.message : "Permission update failed.",
       });
+      return false;
     } finally {
       setAccessSaving(false);
     }
@@ -561,7 +597,17 @@ function Settings() {
                       <span className="text-muted-foreground">Role</span>
                       <select
                         value={selectedAccessRole?.id ?? ""}
-                        onChange={(event) => setSelectedAccessRoleId(event.target.value)}
+                        onChange={(event) => {
+                          // Unsaved changes are never dropped silently by switching roles.
+                          if (
+                            accessDraftPending &&
+                            !window.confirm(
+                              "This role has unsaved access changes. Switch role and discard them?",
+                            )
+                          )
+                            return;
+                          setSelectedAccessRoleId(event.target.value);
+                        }}
                         className="h-9 min-w-[180px] rounded-md border border-border bg-card px-3"
                       >
                         {roleRecords.map((role) => (
@@ -573,16 +619,37 @@ function Settings() {
                     </label>
                   </div>
                   {selectedAccessRole && (
-                    <StaffRolePreset
-                      key={selectedAccessRole.id}
-                      roleId={selectedAccessRole.id}
-                      disabled={!canManageRoleAccess || accessSaving}
+                    <RoleAccessEditor
+                      // A saved change reloads the role, which starts the editor afresh.
+                      key={`${selectedAccessRole.id}:${[...selectedAccessRole.permissions].sort().join(",")}`}
+                      role={selectedAccessRole}
+                      editorPermissions={currentUser.permissions}
+                      editorCanDelegateAll={currentUser.permissions.includes(
+                        platformPermissions.enterpriseAccessManage,
+                      )}
+                      showHeadOffice={
+                        branchRecords.length > 1 ||
+                        selectedAccessRole.permissions.some((code) =>
+                          code.startsWith("enterprise."),
+                        )
+                      }
+                      disabled={!canManageRoleAccess}
+                      saving={accessSaving}
+                      onSave={(next, reason, base) =>
+                        saveRolePermissions(selectedAccessRole.id, next, reason, base)
+                      }
+                      onPendingChange={setAccessDraftPending}
                     />
                   )}
                   <details className="mt-3 rounded-lg border border-border">
                     <summary className="cursor-pointer px-3 py-2.5 text-[13px] font-semibold">
-                      Fine-tune permissions
+                      Advanced: individual permissions
                     </summary>
+                    {accessDraftPending && (
+                      <p className="border-t border-border px-3 py-2 text-[12px] text-muted-foreground">
+                        Save or discard the changes above before editing individual permissions.
+                      </p>
+                    )}
                     <div className="overflow-x-auto border-t border-border">
                       <table className="w-full min-w-[1100px]">
                         <thead>
@@ -623,7 +690,10 @@ function Settings() {
                                       requirement={requirement}
                                       rolePermissions={selectedAccessRole?.permissions ?? []}
                                       disabled={
-                                        !selectedAccessRole || accessSaving || !canManageRoleAccess
+                                        !selectedAccessRole ||
+                                        accessSaving ||
+                                        !canManageRoleAccess ||
+                                        accessDraftPending
                                       }
                                       onToggle={(permission) =>
                                         selectedAccessRole
@@ -846,8 +916,33 @@ function Settings() {
                     </div>
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       <Status>{channel.enabled ? "Active" : "Disabled"}</Status>
+                      {channel.channelType === "MARKETPLACE" && (
+                        <PayoutAccountsDialog
+                          channel={channel}
+                          tenantId={activeTenantId}
+                          userId={currentUser.id}
+                          disabled={!canManageOrderChannels || Boolean(configSaving)}
+                          onSave={(payoutAccounts) =>
+                            updateConfiguredChannel(channel.id, channel.displayName, {
+                              payoutAccounts,
+                            })
+                          }
+                        />
+                      )}
+                      <DeliverySettingsDialog
+                        channel={channel}
+                        currency={tenant?.defaultCurrency ?? "KES"}
+                        branches={branchRecords}
+                        disabled={!canManageOrderChannels || Boolean(configSaving)}
+                        onSave={(deliverySettings) =>
+                          updateConfiguredChannel(channel.id, channel.displayName, {
+                            deliverySettings,
+                          })
+                        }
+                      />
                       <Btn
                         disabled={!canManageOrderChannels || Boolean(configSaving)}
+                        title="On: orders on this channel, and the menu sent to its delivery app, use each item's online price where one is set. Off: the store price."
                         onClick={() =>
                           void updateConfiguredChannel(channel.id, channel.displayName, {
                             useOnlinePrice: channel.metadata["useOnlinePrice"] !== true,

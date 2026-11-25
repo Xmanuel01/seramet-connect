@@ -20,6 +20,10 @@
     ],
   },
   "triggers": { "crons": ["*/1 * * * *"] },
+  "durable_objects": {
+    "bindings": [{ "name": "SERAMET_REALTIME_HUB", "class_name": "SerametRealtimeHub" }],
+  },
+  "migrations": [{ "tag": "v1-realtime-hub", "new_sqlite_classes": ["SerametRealtimeHub"] }],
   "vars": {
     "SERAMET_ENVIRONMENT": "staging",
     "SERAMET_DATABASE_PROVIDER": "postgres",

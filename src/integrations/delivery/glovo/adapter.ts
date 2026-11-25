@@ -401,7 +401,10 @@ function normalizeGlovoOrder(
     moneyValue(payment["order_total"]) || subtotal - promotions + taxes + deliveryFee + serviceFee;
   const charges = glovoCharges(order, connection, id);
   const status = String(order["status"] ?? "RECEIVED").toUpperCase();
-  const scheduledFor = stringAt(order, "scheduled_for");
+  // A Glovo pre-order says when the customer was promised it (promised_for); the kitchen works
+  // back from that, less the channel's rider trip. scheduled_for is read for older payloads.
+  const preorder = String(order["isPreorder"] ?? order["is_preorder"]) === "true";
+  const scheduledFor = stringAt(order, "promised_for") ?? stringAt(order, "scheduled_for");
   const externalCustomerId =
     stringAt(order, "customer", "_id") ?? stringAt(order, "customer", "id");
   const customerName =
@@ -426,9 +429,7 @@ function normalizeGlovoOrder(
         stringAt(order, "sys", "created_at") ??
         stringAt(order, "created_at") ??
         new Date().toISOString(),
-      ...(String(order["isPreorder"] ?? order["is_preorder"]) === "true" && scheduledFor
-        ? { scheduledFor }
-        : {}),
+      ...(preorder && scheduledFor ? { scheduledFor } : {}),
       currency: stringAt(order, "currency") ?? "KES",
       customer: {
         ...(externalCustomerId ? { externalCustomerId } : {}),

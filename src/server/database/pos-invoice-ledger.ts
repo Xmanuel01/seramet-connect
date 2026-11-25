@@ -3,8 +3,11 @@ import { ServerOperationError } from "@/server/errors";
 import type { D1Database, D1PreparedStatement } from "./d1";
 
 const keys = ["CUSTOMER_RECEIVABLE", "SALES_REVENUE", "TAX_PAYABLE", "SERVICE_CHARGE"] as const;
-type MappingKey = (typeof keys)[number];
-type Accounts = Record<MappingKey, string>;
+type MappingKey = (typeof keys)[number] | "DELIVERY_PAYABLE" | "DELIVERY_FEES";
+type Accounts = Record<(typeof keys)[number], string> & {
+  DELIVERY_PAYABLE?: string;
+  DELIVERY_FEES?: string;
+};
 type LedgerSnapshot = {
   version: 1;
   branchId: string;
@@ -40,17 +43,22 @@ type InvoiceInput = {
 
 function approvedPostingGuard(input: InvoiceInput, accounts: Accounts) {
   const values: string[] = [];
-  const clauses = keys.map((key) => {
+  const postingKeys: MappingKey[] = [
+    ...keys,
+    ...(accounts.DELIVERY_PAYABLE ? ["DELIVERY_PAYABLE" as const] : []),
+    ...(accounts.DELIVERY_FEES ? ["DELIVERY_FEES" as const] : []),
+  ];
+  const clauses = postingKeys.map((key) => {
     const types =
       key === "CUSTOMER_RECEIVABLE"
         ? "'ASSET','CUSTOMER_RECEIVABLE'"
-        : key === "TAX_PAYABLE"
+        : key === "TAX_PAYABLE" || key === "DELIVERY_PAYABLE"
           ? "'LIABILITY'"
           : "'INCOME','REVENUE'";
     values.push(
       input.tenantId,
       key,
-      accounts[key],
+      accounts[key]!,
       input.currency,
       input.branchId,
       input.branchId,
@@ -116,6 +124,13 @@ function readSnapshot(payload: Record<string, unknown>): LedgerSnapshot {
     );
   }
   const verified = components(payload, snapshot.currency);
+  if ((verified.deliveryPayableMinor ?? 0) > 0 && typeof accounts.DELIVERY_PAYABLE !== "string")
+    reject("Delivery payable accounting snapshot is missing");
+  if (
+    (verified.deliveryChargeMinor ?? 0) > (verified.deliveryPayableMinor ?? 0) &&
+    typeof accounts.DELIVERY_FEES !== "string"
+  )
+    reject("Delivery revenue accounting snapshot is missing");
   if (!record(snapshot.components) || !sameComponents(verified, snapshot.components)) {
     reject("Persisted invoice accounting snapshot is inconsistent");
   }
@@ -127,17 +142,21 @@ function sameComponents(
   right: Record<string, unknown> | InvoiceComponents,
 ) {
   return (
-    [
-      "version",
-      "currency",
-      "grossSalesMinor",
-      "discountsMinor",
-      "netSalesMinor",
-      "serviceChargeMinor",
-      "taxMinor",
-      "totalMinor",
-    ] as const
-  ).every((key) => left[key] === right[key]);
+    (
+      [
+        "version",
+        "currency",
+        "grossSalesMinor",
+        "discountsMinor",
+        "netSalesMinor",
+        "serviceChargeMinor",
+        "taxMinor",
+        "totalMinor",
+      ] as const
+    ).every((key) => left[key] === right[key]) &&
+    (left.deliveryChargeMinor ?? 0) === (right.deliveryChargeMinor ?? 0) &&
+    (left.deliveryPayableMinor ?? 0) === (right.deliveryPayableMinor ?? 0)
+  );
 }
 
 /** Normalized journals are the financial authority; these statements join the existing atomic mutation. */
@@ -157,7 +176,15 @@ export class PosInvoiceLedger {
       )
       .bind(input.tenantId, input.branchId)
       .all<Mapping>();
-    const selected = keys.map((key) => {
+    const amounts = components(input.payload, input.currency);
+    const postingKeys: MappingKey[] = [
+      ...keys,
+      ...((amounts.deliveryPayableMinor ?? 0) > 0 ? ["DELIVERY_PAYABLE" as const] : []),
+      ...((amounts.deliveryChargeMinor ?? 0) > (amounts.deliveryPayableMinor ?? 0)
+        ? ["DELIVERY_FEES" as const]
+        : []),
+    ];
+    const selected = postingKeys.map((key) => {
       const candidates = (rows.results ?? []).filter((row) => row.mapping_key === key);
       const mapping =
         candidates.find((row) => row.mapping_branch === input.branchId) ??
@@ -165,7 +192,7 @@ export class PosInvoiceLedger {
       const types =
         key === "CUSTOMER_RECEIVABLE"
           ? ["ASSET", "CUSTOMER_RECEIVABLE"]
-          : key === "TAX_PAYABLE"
+          : key === "TAX_PAYABLE" || key === "DELIVERY_PAYABLE"
             ? ["LIABILITY"]
             : ["INCOME", "REVENUE"];
       if (
@@ -264,6 +291,17 @@ export class PosInvoiceLedger {
       const lines = [
         { accountId: accounts.CUSTOMER_RECEIVABLE, signed: current.totalMinor },
         { accountId: accounts.SALES_REVENUE, signed: -current.netSalesMinor },
+        ...((current.deliveryChargeMinor ?? 0) > (current.deliveryPayableMinor ?? 0)
+          ? [
+              {
+                accountId: accounts.DELIVERY_FEES!,
+                signed: -((current.deliveryChargeMinor ?? 0) - (current.deliveryPayableMinor ?? 0)),
+              },
+            ]
+          : []),
+        ...(current.deliveryPayableMinor
+          ? [{ accountId: accounts.DELIVERY_PAYABLE!, signed: -current.deliveryPayableMinor }]
+          : []),
         { accountId: accounts.SERVICE_CHARGE, signed: -current.serviceChargeMinor },
         { accountId: accounts.TAX_PAYABLE, signed: -current.taxMinor },
       ].filter((line) => line.signed !== 0);

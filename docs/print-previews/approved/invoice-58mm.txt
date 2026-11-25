@@ -1,0 +1,31 @@
+    MONA SWAHILI RESTAURANT
+Kipro Centre, Westlands, Sports
+         Road, Nairobi
+     Tel: +254 719 427 919
+--------------------------------
+            INVOICE
+INV #0633U         | DATE:
+                   | 22 Nov 2026
+CUSTOMER:          | TIME:
+Uber Eats          | 10:25 AM
+- - - - - - - - - - - - - - - -
++---+--------------+-----------+
+|QTY|ITEM          |TOTAL (KES)|
++---+--------------+-----------+
+| 2 |Mbuzi Stew +  |   2,300.00|
+|   |Rice          |           |
+|   |@ 1,150.00    |           |
++---+--------------+-----------+
+| 3 |Ugali         |     450.00|
+|   |@ 150.00      |           |
++---+--------------+-----------+
+            SUBTOTAL    2,750.00
+            VAT (0%)        0.00
+     DELIVERY CHARGE      100.00
+--------------------------------
+GRAND TOTAL         KES 2,850.00
+--------------------------------
+PAY WITH M-PESA
+Till No. 4235484
+Amount: KES 2,850.00
+Dynamic QR payment unavailable.

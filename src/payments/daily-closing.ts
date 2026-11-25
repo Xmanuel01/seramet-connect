@@ -19,6 +19,7 @@ import {
 import type { CashDrawerSession, CashMovement, DayClose } from "@/payments/types";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { permissions } from "@/platform/permissions";
+import { marketplaceDaySummary, type MarketplaceDayRow } from "@/payments/marketplace-day-summary";
 export class DailyClosingError extends Error {
   readonly code: "PERMISSION_DENIED" | "INVALID_STATE_TRANSITION";
   constructor(
@@ -83,6 +84,7 @@ export type DailyClosingReport = {
   invoices: TransactionState["bills"];
   voidedInvoiceIds: string[];
   mpesa?: MpesaDaySummary;
+  marketplace?: MarketplaceDayRow[];
   // Why M-Pesa payments not yet on a bill were carried over to the next day.
   mpesaCarryOverReason?: string;
 };
@@ -606,6 +608,14 @@ export function closeBusinessDay(
       timeZone: accounting.timeZone,
       cutoffMinutes: accounting.businessDayCutoffMinutes,
       supervisorId: actor.id,
+      marketplace: marketplaceDaySummary(next, {
+        tenantId: actor.tenantId,
+        branchId: actor.branchId,
+        businessDate: input.businessDate,
+        timeZone: accounting.timeZone,
+        cutoffMinutes: accounting.businessDayCutoffMinutes,
+        currency: accounting.tenant.defaultCurrency,
+      }),
       operatorNames,
       drawers: structuredClone(
         drawersForDay(next, actor.tenantId, actor.branchId, input.businessDate),
@@ -751,6 +761,14 @@ export function summarizeBusinessDay(
       timeZone: accounting.timeZone,
       cutoffMinutes: accounting.businessDayCutoffMinutes,
       supervisorId: "system",
+      marketplace: marketplaceDaySummary(next, {
+        tenantId: input.tenantId,
+        branchId: input.branchId,
+        businessDate: input.businessDate,
+        timeZone: accounting.timeZone,
+        cutoffMinutes: accounting.businessDayCutoffMinutes,
+        currency: accounting.tenant.defaultCurrency,
+      }),
       operatorNames,
       drawers: structuredClone(drawers),
       cashMovements: structuredClone(

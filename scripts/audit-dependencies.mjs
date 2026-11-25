@@ -1,7 +1,10 @@
 // CI dependency audit: fails on any moderate+ advisory except time-boxed
-// dev-only exceptions listed in scripts/audit-exceptions.json. An exception
-// never applies once the advisory reaches the production dependency tree, and
-// an expired exception fails the build.
+// exceptions listed in scripts/audit-exceptions.json. An ordinary exception is
+// dev-only and never applies once the advisory reaches the production dependency
+// tree. A "buildOnly" exception may cover a production-tree package that is used
+// only while building: it must name bundleMarkers, and the production bundle audit
+// (scripts/audit-production-bundle.mjs) fails if any of them appears in what is
+// deployed. An expired exception of either kind fails the build.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -30,6 +33,24 @@ export function advisoriesOf(report, name, seen = new Set()) {
   return found;
 }
 
+/**
+ * The packages an advisory is actually filed against, reached from a vulnerable package
+ * through its `via` chain (for vite -> picomatch, picomatch).
+ */
+export function advisoryOrigins(report, name, id, seen = new Set()) {
+  const origins = new Set();
+  if (seen.has(name)) return origins;
+  seen.add(name);
+  for (const via of report.vulnerabilities?.[name]?.via ?? []) {
+    if (typeof via === "string") {
+      for (const origin of advisoryOrigins(report, via, id, seen)) origins.add(origin);
+    } else if (/GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}/i.exec(via.url ?? "")?.[0] === id) {
+      origins.add(via.name ?? name);
+    }
+  }
+  return origins;
+}
+
 const isReport = (report) =>
   Boolean(report) &&
   typeof report === "object" &&
@@ -56,6 +77,17 @@ export function evaluateAudit({ devReport, prodReport, exceptions, today }) {
       problems.push(
         `Audit exception ${exception.id} expired on ${exception.expires}; fix or renew it.`,
       );
+    else if (
+      exception.buildOnly === true &&
+      (typeof exception.package !== "string" ||
+        !exception.package ||
+        !Array.isArray(exception.bundleMarkers) ||
+        !exception.bundleMarkers.length ||
+        exception.bundleMarkers.some((marker) => typeof marker !== "string" || marker.length < 6))
+    )
+      problems.push(
+        `Build-only audit exception ${exception.id} needs its package and bundleMarkers the bundle audit can check.`,
+      );
     else active.set(exception.id, exception);
   }
   const prodAdvisories = new Set(
@@ -63,10 +95,19 @@ export function evaluateAudit({ devReport, prodReport, exceptions, today }) {
       ...advisoriesOf(prodReport, name).keys(),
     ]),
   );
+  // A build-only exception excuses only its own package's advisory, wherever it is reached from.
+  const excused = (name, id) => {
+    const exception = active.get(id);
+    if (!exception) return false;
+    if (!prodAdvisories.has(id)) return true;
+    if (exception.buildOnly !== true) return false;
+    const origins = [...advisoryOrigins(devReport, name, id)];
+    return origins.length > 0 && origins.every((origin) => origin === exception.package);
+  };
   for (const name of Object.keys(devReport.vulnerabilities)) {
     const unexcused = [...advisoriesOf(devReport, name)]
       .filter(([, severity]) => atLeastModerate(severity))
-      .filter(([id]) => !active.has(id) || prodAdvisories.has(id))
+      .filter(([id]) => !excused(name, id))
       .map(([id, severity]) => `${id} (${severity})`);
     if (unexcused.length) problems.push(`${name}: ${unexcused.join(", ")}`);
   }

@@ -17,6 +17,8 @@ import type { ServerActor } from "@/lib/seramet-auth";
 import { emptyPaymentOperationsState } from "@/payments/payment-state";
 import type { D1Database, D1PreparedStatement } from "@/server/database/d1";
 import { ServerOperationError } from "@/server/errors";
+import type { RealtimeEvent } from "@/server/realtime";
+import { notifyRealtimeHub, type RealtimeHubNamespace } from "@/server/realtime-hub";
 import { authoritativeBusinessDate } from "@/server/business-date";
 import { QUANTITY_SCALE, quantityCostMinor } from "@/inventory/quantity";
 import { parseMajorAmount } from "@/payments/money";
@@ -157,7 +159,7 @@ const WORKING_SET_LOOKBACK_MS = 48 * 60 * 60 * 1_000;
 const sqlList = (values: readonly string[]) => values.map((value) => `'${value}'`).join(", ");
 
 // The first two conditions are exactly the predicate of idx_authoritative_records_working_set
-// (migration 0038), which is what lets the planner use that index. The last condition keeps
+// (migration 0039), which is what lets the planner use that index. The last condition keeps
 // confirmed money that is not yet applied to a bill: it still waits for a person, however old.
 // Binds: tenant, earliest business date, earliest update time.
 const WORKING_SET_SQL = `SELECT ${ROW_COLUMNS}
@@ -243,7 +245,10 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
 
   constructor(
     private readonly db: D1Database,
-    private readonly options: { requireInvoiceLedger?: boolean } = {},
+    private readonly options: {
+      requireInvoiceLedger?: boolean;
+      realtimeHub?: RealtimeHubNamespace;
+    } = {},
   ) {}
 
   async migrate() {
@@ -349,7 +354,12 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
     return reconstructState(tenantId, [...rows.values()]);
   }
 
-  async saveState(state: TransactionState, actor: ServerActor, reason: string) {
+  async saveState(
+    state: TransactionState,
+    actor: ServerActor,
+    reason: string,
+    options?: { expectedRevision?: number },
+  ) {
     if (state.tenantId !== actor.tenantId) {
       throw new ServerOperationError(
         "TENANT_SCOPE_VIOLATION",
@@ -373,7 +383,17 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
       requestHash: await sha256(JSON.stringify({ reason, state })),
       correlationId: crypto.randomUUID(),
       reason,
+      ...(options?.expectedRevision !== undefined
+        ? { requiredBaseRevision: options.expectedRevision }
+        : {}),
     });
+  }
+
+  async loadStateWithRevision(tenantId: string) {
+    const { state, revision } = await this.loadStateAtStableRevision(tenantId);
+    // A full read, like loadState: a save may follow it.
+    this.partialReads.delete(tenantId);
+    return { state, revision };
   }
 
   async commitMutation(input: TransactionMutationCommit): Promise<TransactionMutationResult> {
@@ -602,6 +622,17 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
           stamp,
         ),
     );
+    const realtimeEvent: RealtimeEvent = {
+      id: crypto.randomUUID(),
+      branchId: input.actor.branchId ?? null,
+      topic: "transactions",
+      entityType: "TRANSACTION_COMMAND",
+      entityId: input.idempotencyKey,
+      eventType: input.action,
+      correlationId: input.correlationId,
+      payload: { revision: newRevision },
+      createdAt: stamp,
+    };
     statements.push(
       this.db
         .prepare(
@@ -612,14 +643,14 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
         )
         .bind(
           tenantId,
-          crypto.randomUUID(),
-          input.actor.branchId ?? null,
-          "transactions",
-          "TRANSACTION_COMMAND",
-          input.idempotencyKey,
-          input.action,
-          input.correlationId,
-          JSON.stringify({ revision: newRevision }),
+          realtimeEvent.id,
+          realtimeEvent.branchId,
+          realtimeEvent.topic,
+          realtimeEvent.entityType,
+          realtimeEvent.entityId,
+          realtimeEvent.eventType,
+          realtimeEvent.correlationId,
+          JSON.stringify(realtimeEvent.payload),
           stamp,
           new Date(Date.parse(stamp) + 24 * 60 * 60 * 1_000).toISOString(),
         ),
@@ -702,6 +733,8 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
     // Whether the batch commits or fails, the rows read before it are no longer known current.
     this.snapshots.delete(tenantId);
     await this.db.batch(statements);
+    // Committed: push the event to the restaurant's open devices (the row is the catch-up log).
+    await notifyRealtimeHub(this.options.realtimeHub, tenantId, [realtimeEvent]);
     return newRevision;
   }
 

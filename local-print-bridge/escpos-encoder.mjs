@@ -34,9 +34,19 @@ const CP437 = {
 const NO_SPACING = [ESC, 0x33, 0];
 const DEFAULT_SPACING = [ESC, 0x32];
 
+// Headings of the approved KOT, BOT, invoice and receipt layouts. Text mode
+// only: raster layouts keep printing-core's isStrongLine, which the server and
+// every installed bridge must agree on for the document integrity check.
+const APPROVED_HEADINGS =
+  /^(INVOICE|GENERAL INSTRUCTIONS|END OF (KITCHEN|BAR) ORDER|PAYMENT DETAILS|eTIMS VERIFY|THANK YOU FOR YOUR BUSINESS|RECEIPT\s+\[ PAID \]|(NEW ORDER|ADDED ITEMS|CANCELLED)\s+(KITCHEN|BAR))$/;
+
 export function isStrongText(line, index) {
+  const text = line.trim();
   return (
     index === 0 ||
+    APPROVED_HEADINGS.test(text) ||
+    /^(ORDER #|GRAND TOTAL\s)/.test(text) ||
+    /^\d+(\.\d+)? x \S/.test(line) ||
     /^(BILL|RECEIPT|TAX INVOICE|PAID|DUPLICATE COPY)$/.test(line.trim()) ||
     /^(KITCHEN ORDER|BAR ORDER|KDS ORDER|KOT #|BAR #)/.test(line.trim()) ||
     /^\|\s*TOTAL\s*\|/.test(line) ||
@@ -53,6 +63,20 @@ export function finishCommands(cutter) {
   if (cutter === "full") return Buffer.from([GS, 0x56, 65, 0]);
   if (cutter === "none") return Buffer.from([ESC, 0x64, 5]);
   throw new Error("UNSUPPORTED_CUTTER");
+}
+
+/**
+ * A validated 1-bit logo, centred (ESC a 1) as one GS v 0 image, then a line
+ * feed and left alignment again (ESC a 0) for the document below it.
+ */
+export function logoCommands(logo) {
+  const stride = Math.ceil(logo.width / 8);
+  return Buffer.concat([
+    Buffer.from([ESC, 0x61, 1, GS, 0x76, 0x30, 0]),
+    Buffer.from([stride & 255, stride >> 8, logo.height & 255, logo.height >> 8]),
+    Buffer.from(logo.data, "base64"),
+    Buffer.from([0x0a, ESC, 0x61, 0]),
+  ]);
 }
 
 export function encodeEscPos(content, profile) {

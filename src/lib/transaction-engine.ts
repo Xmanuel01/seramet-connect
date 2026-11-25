@@ -1,5 +1,10 @@
 import { LOCAL_PILOT_TENANT_ID } from "@/platform/pilot-defaults";
 import {
+  deliveryContactSchema,
+  deliveryChargeSchema,
+  type DeliveryCharge,
+} from "@/delivery/delivery-charge";
+import {
   orderChannelDispatchError,
   OrderChannelValidationError,
 } from "@/orders/order-channel-service";
@@ -119,6 +124,20 @@ export type TransactionOrder = {
   inventoryPostedAt?: string;
   delivery?: {
     recipientName?: string;
+    phone?: string;
+    phoneCode?: string;
+    doorNumber?: string;
+    charge?: DeliveryCharge;
+    feeSettlement?: {
+      id: string;
+      mode: "RETAIN_FEE" | "REMIT_ALL" | "PAY_FEE";
+      paidMinor: number;
+      remittedMinor: number;
+      paymentMethodId: string;
+      reference?: string;
+      actor: string;
+      occurredAt: string;
+    };
     address?: string;
     rider?: string;
     status: "UNASSIGNED" | "ASSIGNED" | "PICKED_UP" | "OUT_FOR_DELIVERY" | "DELIVERED";
@@ -166,6 +185,9 @@ export type ExternalOrderSource = {
   fulfilmentType: "PROVIDER_DELIVERY" | "OWN_DELIVERY" | "PICKUP";
   isScheduled: boolean;
   scheduledFor?: string;
+  /** When the food must be ready: the app's pickup time, else the delivery time less travel. */
+  scheduledReadyAt?: string;
+  /** When the kitchen gets it: the ready time less prep time and the buffer. */
   scheduledReleaseAt?: string;
   estimatedReadyAt?: string;
   receivedAt: string;
@@ -320,6 +342,7 @@ export type AttendanceRecord = {
 };
 
 export type BillingRecord = {
+  deliveryDetails?: NonNullable<TransactionOrder["delivery"]>[];
   id: string;
   tenantId?: string;
   branchId?: string;
@@ -812,10 +835,21 @@ function pricedTotals(
   lines: TransactionLine[],
   tenantId: string,
   override?: OrderDraft["financialOverride"],
+  delivery?: TransactionOrder["delivery"],
 ) {
+  if (delivery && !deliveryContactSchema.safeParse(delivery).success)
+    throw new OrderChannelValidationError("Delivery contact details are invalid or too long.");
+  const charge = delivery?.charge ? deliveryChargeSchema.parse(delivery.charge) : undefined;
+  const deliveryMinor = charge?.amountMinor ?? 0;
+  const deliveryPayableMinor = charge?.beneficiary === "RIDER" ? deliveryMinor : 0;
   const currency = configurationRepository.getTenant(tenantId).defaultCurrency;
   if (override) {
     const { financialComponents, ...amounts } = override;
+    if (
+      (financialComponents?.deliveryChargeMinor ?? 0) !== deliveryMinor ||
+      (financialComponents?.deliveryPayableMinor ?? 0) !== deliveryPayableMinor
+    )
+      throw new Error("Delivery charge does not reconcile with invoice components");
     return {
       ...amounts,
       financialComponents: financialComponents
@@ -833,7 +867,7 @@ function pricedTotals(
       );
     }),
   );
-  const subtotal = majorFromMinor(totalMinor, currency);
+  const subtotal = majorFromMinor(sumMinor([totalMinor, deliveryMinor]), currency);
   const amounts = { subtotal, tax: 0, total: subtotal };
   return {
     ...amounts,
@@ -845,8 +879,9 @@ function pricedTotals(
         discountsMinor: 0,
         netSalesMinor: totalMinor,
         serviceChargeMinor: 0,
+        ...(charge ? { deliveryChargeMinor: deliveryMinor, deliveryPayableMinor } : {}),
         taxMinor: 0,
-        totalMinor,
+        totalMinor: sumMinor([totalMinor, deliveryMinor]),
       },
       amounts,
       currency,
@@ -1861,7 +1896,12 @@ export const TransactionEngine = {
           : line.productionStatus;
       return productionStatus ? { ...line, productionStatus } : { ...line };
     });
-    const total = pricedTotals(normalizedLines, scope.tenantId, draft.financialOverride);
+    const total = pricedTotals(
+      normalizedLines,
+      scope.tenantId,
+      draft.financialOverride,
+      draft.delivery,
+    );
     const {
       delivery,
       externalSource,
@@ -2362,7 +2402,13 @@ export const TransactionEngine = {
       });
     }
 
-    const total = pricedTotals(normalizedLines, scope.tenantId, draft.financialOverride);
+    const total = pricedTotals(
+      normalizedLines,
+      scope.tenantId,
+      draft.financialOverride,
+      draft.delivery ?? order.delivery,
+    );
+    if (draft.delivery) order.delivery = { ...order.delivery, ...draft.delivery };
     order.tenantId = scope.tenantId;
     order.branchId = scope.branchId;
     order.branch = scope.branch;
@@ -2575,7 +2621,11 @@ export const TransactionEngine = {
     const order = next.orders.find((item) => item.id === orderId);
     if (!order) throw new Error(`Order ${orderId} was not found`);
     const existing = next.bills.filter((bill) => bill.orderIds.includes(orderId));
-    if (existing.some((bill) => ["OPEN", "PARTIAL", "PENDING", "PAID"].includes(bill.status))) {
+    if (
+      existing.some((bill) =>
+        ["OPEN", "PARTIAL", "PENDING", "PAID", "PROVIDER_RECEIVABLE"].includes(bill.status),
+      )
+    ) {
       return next;
     }
     if (existing.some((bill) => bill.status === "SPLIT" || bill.status === "MERGED")) {
@@ -2586,6 +2636,7 @@ export const TransactionEngine = {
       order.tenantId ?? next.tenantId ?? LOCAL_PILOT_TENANT_ID,
     );
     const bill: BillingRecord = {
+      ...(order.delivery ? { deliveryDetails: [structuredClone(order.delivery)] } : {}),
       id: id("BILL", next, "bills"),
       ...scope,
       orderIds: [order.id],
@@ -2636,6 +2687,11 @@ export const TransactionEngine = {
     }
     if (["CANCELLED", "PAID", "REFUNDED"].includes(order.status)) {
       throw new Error(`Order ${orderId} cannot enter payment from ${order.status}`);
+    }
+    if (order.paymentStatus === "PROVIDER_RECEIVABLE") {
+      throw new Error(
+        "This delivery-app order is paid through the app. Collect any amount due on delivery on Invoices.",
+      );
     }
     if (["HELD", "OPEN"].includes(order.status)) {
       throw new Error(`Order ${orderId} must be sent to kitchen before payment can be prepared`);
@@ -2881,6 +2937,7 @@ export const TransactionEngine = {
       normalizedLines,
       order.tenantId ?? next.tenantId!,
       input.financialOverride,
+      order.delivery,
     );
     order.lines = normalizedLines;
     order.subtotal = nextTotals.subtotal;
@@ -2983,7 +3040,12 @@ export const TransactionEngine = {
           : line.productionStatus;
       return productionStatus ? { ...line, productionStatus } : { ...line };
     });
-    const total = pricedTotals(normalizedLines, scope.tenantId, draft.financialOverride);
+    const total = pricedTotals(
+      normalizedLines,
+      scope.tenantId,
+      draft.financialOverride,
+      draft.delivery ?? order.delivery,
+    );
     order.tenantId = scope.tenantId;
     order.branchId = scope.branchId;
     order.branch = scope.branch;
@@ -3414,6 +3476,8 @@ export const TransactionEngine = {
                   "discountsMinor",
                   "netSalesMinor",
                   "serviceChargeMinor",
+                  "deliveryChargeMinor",
+                  "deliveryPayableMinor",
                   "taxMinor",
                   "totalMinor",
                 ] as const
@@ -3422,7 +3486,8 @@ export const TransactionEngine = {
                 sumMinor(
                   bills.map(
                     (bill) =>
-                      verifyInvoiceComponents(bill.financialComponents!, bill, currency)[field],
+                      verifyInvoiceComponents(bill.financialComponents!, bill, currency)[field] ??
+                      0,
                   ),
                 ),
               ]),
@@ -3433,6 +3498,7 @@ export const TransactionEngine = {
         )
       : undefined;
     const merged: BillingRecord = {
+      deliveryDetails: bills.flatMap((bill) => bill.deliveryDetails ?? []),
       id: id("BILL", next, "bills"),
       ...scope,
       sourceBillIds: billIds,

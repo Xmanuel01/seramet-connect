@@ -217,9 +217,9 @@ test("saved enrolled bridge auto-discovers Windows printers without creating rou
   expect(completedDiscoveries).toBe(1);
   expect(discoveries).toBeLessThanOrEqual(2);
   expect(writes).toBe(0);
-  await page.getByRole("button", { name: "Configure printer", exact: true }).click();
-  await expect(page.getByLabel("Installed printer name")).toHaveValue("Disposable Thermal Printer");
-  await expect(page.getByLabel("Enrolled bridge ID")).toHaveValue("disposable-bridge");
+  await page.getByRole("button", { name: "Set up this printer", exact: true }).click();
+  await expect(page.getByLabel("Windows printer name")).toHaveValue("Disposable Thermal Printer");
+  await expect(page.getByLabel("Print bridge ID")).toHaveValue("disposable-bridge");
   expect(writes).toBe(0);
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.route("http://127.0.0.1:48777/printers", (route) =>
@@ -233,9 +233,11 @@ test("saved enrolled bridge auto-discovers Windows printers without creating rou
       }),
     }),
   );
-  await page.getByRole("button", { name: "Detect installed printers", exact: true }).click();
+  await page.getByRole("button", { name: "Find printers on this computer", exact: true }).click();
   await expect(
-    page.getByText("This bridge is not enrolled for the selected restaurant and branch."),
+    page.getByText("This computer is set up for a different restaurant or branch.", {
+      exact: false,
+    }),
   ).toBeVisible();
   await expect(page.getByText("Other branch printer", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Disposable Thermal Printer", { exact: true })).toHaveCount(0);
@@ -293,7 +295,7 @@ test("Connect this PC pairs the local bridge with a server enrollment and detect
   });
   await page.goto("/seramet-printers");
   const thisPc = page.getByRole("region", { name: "This computer" });
-  await expect(thisPc).toContainText("Print bridge 3.1.0 is ready on FRONT DESK");
+  await expect(thisPc).toContainText("The Seramet Print Bridge is installed on FRONT DESK");
   const enrollmentResponse = page.waitForResponse(
     (response) =>
       response.url().endsWith("/api/seramet/printing/enrollment") && response.status() === 200,
@@ -301,7 +303,7 @@ test("Connect this PC pairs the local bridge with a server enrollment and detect
   await thisPc.getByRole("button", { name: "Connect this PC", exact: true }).click();
   const enrollment = await (await enrollmentResponse).json();
   await expect(page.getByText("Front Desk Thermal", { exact: true })).toBeVisible();
-  await expect(thisPc).toContainText("Connected: FRONT DESK");
+  await expect(thisPc).toContainText("FRONT DESK is ready to print");
   expect(paired!.bridgeId).toMatch(/^front-desk-[0-9a-f]{12}$/);
   expect(enrollment.bridgeId).toBe(paired!.bridgeId);
   expect((paired as unknown as { signingKey: string }).signingKey).toBe(enrollment.signingKey);
@@ -318,7 +320,7 @@ test("Connect this PC pairs the local bridge with a server enrollment and detect
     endpoint: "http://127.0.0.1:48777",
     token: paired!.token,
   });
-  await page.getByRole("button", { name: "Configure printer", exact: true }).click();
-  await expect(page.getByLabel("Enrolled bridge ID")).toHaveValue(paired!.bridgeId);
-  await expect(page.getByLabel("Installed printer name")).toHaveValue("Front Desk Thermal");
+  await page.getByRole("button", { name: "Set up this printer", exact: true }).click();
+  await expect(page.getByLabel("Print bridge ID")).toHaveValue(paired!.bridgeId);
+  await expect(page.getByLabel("Windows printer name")).toHaveValue("Front Desk Thermal");
 });

@@ -9,6 +9,7 @@ export default tseslint.config(
   {
     ignores: [
       "dist",
+      "printing-core/fonts/rich-fonts.mjs",
       ".output",
       ".vinxi",
       ".vite-cache",

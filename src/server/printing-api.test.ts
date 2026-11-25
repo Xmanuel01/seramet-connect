@@ -16,6 +16,7 @@ import { permissions } from "@/platform/permissions";
 import { printerConfigurationSchema } from "@/printing/printer-configuration";
 import { createEmptyTransactionState } from "@/lib/transaction-engine";
 import { hydrateSeededTenantsForTests } from "@/testing/configuration-fixture";
+import { loadTenantConfigurationState } from "@/server/database/authoritative-configuration";
 
 vi.mock("@/lib/seramet-auth", async (original) => ({
   ...(await original<object>()),
@@ -115,10 +116,16 @@ it("binds explicit raster capabilities and canonical layout; text diagnostics ca
   const first = await issue(input);
   const decoded = JSON.parse(Buffer.from(first.authorization.payload, "base64url").toString());
   expect(decoded.profile.renderingMode).toBe("RASTER_ESC_POS");
-  expect(decoded.v).toBe(2);
+  // Image printers get the approved typeset layout (v3), with the ruled text kept
+  // for a text-mode fallback; the legacy text-grid raster layout is not sent.
+  expect(decoded.v).toBe(3);
   expect(decoded.profile.raster).toEqual(raster);
-  expect(decoded.document.version).toBe(1);
-  expect(decoded.document.rows.some((r: { kind: string }) => r.kind === "table")).toBe(true);
+  expect(decoded.document).toBeUndefined();
+  expect(decoded.logo).toBeUndefined();
+  expect(decoded.rich.paper).toBe(config.paperWidth);
+  expect(JSON.stringify(decoded.rich.blocks[0])).toContain("PRINTER TEST - NOT A SALE");
+  expect(JSON.stringify(decoded.rich)).toContain("INVOICE");
+  expect(decoded.content).toContain("PRINTER TEST - NOT A SALE");
   await expect(issue({ ...input, testRenderingMode: "TEXT_ESC_POS" })).rejects.toMatchObject({
     status: 409,
   });
@@ -138,10 +145,11 @@ it("binds explicit raster capabilities and canonical layout; text diagnostics ca
   await expect(
     handlePrintingApi(request("consume", { authorization: changed }), env(), repository),
   ).rejects.toMatchObject({ status: 403 });
+  // Image (raster) mode is allowed on Windows-spooled USB printers too.
   expect(
     printerConfigurationSchema.safeParse({ ...config, transport: "WINDOWS", osPrinterName: "test" })
       .success,
-  ).toBe(false);
+  ).toBe(true);
   expect(
     printerConfigurationSchema.safeParse({ ...config, raster: { ...raster, command: "UNKNOWN" } })
       .success,
@@ -564,12 +572,12 @@ it("issues server-generated diagnostic evidence without accepting client content
     target: { id: printer.id, host: "127.0.0.1" },
   });
   expect(payload.content).toContain("NOT A SALE");
-  // The test print uses the real kitchen ticket template at the printer's width.
-  expect(payload.content).toMatch(/^KITCHEN ORDER\s+KOT /m);
-  expect(payload.content).toContain("PRINTER DIAGNOSTIC");
+  // The test print uses the approved kitchen ticket at the printer's width.
+  expect(payload.content).toMatch(/^\s+KITCHEN ORDER$/m);
+  expect(payload.content).toMatch(/^NEW ORDER\s+KITCHEN$/m);
+  expect(payload.content).toContain("1 x Printer diagnostic");
   const width = printer.paperWidth === "58mm" ? 32 : 42;
   for (const line of payload.content.split("\n")) expect(line.length).toBeLessThanOrEqual(width);
-  expect(payload.content).not.toMatch(/^[-=]+$/m);
   for (const testKind of ["BILL", "RECEIPT"]) {
     const document = await (await handlePrintingApi(
       request("authorize", { ...input, testKind, recordId: crypto.randomUUID() }),
@@ -579,8 +587,9 @@ it("issues server-generated diagnostic evidence without accepting client content
     const content = JSON.parse(
       Buffer.from(document.authorization.payload, "base64url").toString("utf8"),
     ).content;
-    expect(content).toContain(testKind === "BILL" ? "BILL" : "RECEIPT");
-    expect(content).toMatch(/^\|Item\s*\|\s*Qty\|\s*Amount\|$/m);
+    // The bill prints the approved INVOICE layout; the receipt the approved RECEIPT.
+    expect(content).toMatch(testKind === "BILL" ? /^\s+INVOICE$/m : /^RECEIPT/m);
+    expect(content).toMatch(/^\|QTY\|ITEM/m);
   }
   expect(JSON.stringify(result)).not.toContain(signingKey);
   await expect(
@@ -766,8 +775,8 @@ it("authorizes only the exact claimed immutable station obligation and renders i
     JSON.parse(Buffer.from(result.authorization.payload, "base64url").toString("utf8"));
   expect(decode(first).content).toBe(decode(second).content);
   expect(decode(first).id).toBe(`${obligationId}:0`);
-  expect(decode(first).content).toMatch(/\|\s*2\|PERSISTED MEAL/);
-  expect(decode(first).content).toContain("NO SALT");
+  expect(decode(first).content).toMatch(/^2 x Persisted meal$/im);
+  expect(decode(first).content.toUpperCase()).toContain("NO SALT");
   await handlePrintingApi(
     request("consume", { authorization: first.authorization }),
     env(),
@@ -827,9 +836,9 @@ it("authorizes only the exact claimed immutable station obligation and renders i
     repository,
   ))!.json();
   const text = decode(reprint).content.replace(/\s+/g, " ");
-  expect(text).toContain("REPRINT");
-  expect(text).toContain("by Reviewing manager");
-  expect(text).not.toContain(`by ${state.orders[0]!.cashier}`);
+  expect(decode(reprint).content.split("\n")[1]).toMatch(/^REPRINT\s+KITCHEN$/);
+  expect(text).toContain("REQUESTED BY: Reviewing manager");
+  expect(text).not.toContain(`BY: ${state.orders[0]!.cashier}`);
 });
 
 it("derives a separate print signing master when no explicit key is configured", async () => {
@@ -904,4 +913,102 @@ it("lets only hardware managers change the printer bypass", async () => {
       repository,
     ),
   ).rejects.toMatchObject({ status: 403 });
+});
+
+const logoRequest = (method: string, body?: unknown, query = "") =>
+  new Request(`http://localhost/api/seramet/printing/receipt-logo${query}`, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+// 16 x 2 dots, solid top row.
+const sampleLogo = { width: 16, height: 2, data: Buffer.from([255, 255, 0, 0]).toString("base64") };
+
+it("saves company and branch receipt logos, prints the branch one on bills and receipts only", async () => {
+  actor.permissions.push(permissions.settingsOrganisationManage);
+  const saved = await (await handlePrintingApi(
+    logoRequest("PUT", { scope: "COMPANY", logo: sampleLogo }),
+    env(),
+    repository,
+  ))!.json();
+  expect(saved.company).toMatchObject({ ...sampleLogo, updatedBy: actor.id });
+  expect(saved.branch).toBeUndefined();
+  const printer = (
+    await (await handlePrintingApi(request("printers", configuration()), env(), repository))!.json()
+  ).printer;
+  const authorize = async (testKind: string) =>
+    JSON.parse(
+      Buffer.from(
+        (
+          await (await handlePrintingApi(
+            request("authorize", {
+              printerId: printer.id,
+              documentType: "TEST",
+              recordId: crypto.randomUUID(),
+              testKind,
+            }),
+            env(),
+            repository,
+          ))!.json()
+        ).authorization.payload,
+        "base64url",
+      ).toString("utf8"),
+    );
+  expect((await authorize("RECEIPT")).logo).toEqual(sampleLogo);
+  expect((await authorize("FOOD_KOT")).logo).toBeUndefined();
+  const branchLogo = { ...sampleLogo, data: Buffer.from([1, 2, 3, 4]).toString("base64") };
+  await handlePrintingApi(
+    logoRequest("PUT", { scope: "BRANCH", logo: branchLogo }),
+    env(),
+    repository,
+  );
+  expect((await authorize("BILL")).logo).toEqual(branchLogo);
+  const afterRemoval = await (await handlePrintingApi(
+    logoRequest("DELETE", undefined, "?scope=BRANCH"),
+    env(),
+    repository,
+  ))!.json();
+  expect(afterRemoval.branch).toBeUndefined();
+  expect((await authorize("BILL")).logo).toEqual(sampleLogo);
+  const audits = await db
+    .prepare("SELECT action FROM audit_events WHERE tenant_id=? AND action LIKE 'RECEIPT_LOGO_%'")
+    .bind(actor.tenantId)
+    .all<{ action: string }>();
+  expect(audits.results?.map((row) => row.action).sort()).toEqual([
+    "RECEIPT_LOGO_REMOVED",
+    "RECEIPT_LOGO_SAVED",
+    "RECEIPT_LOGO_SAVED",
+  ]);
+});
+
+it("keeps logos out of settings snapshots and refuses bad images and missing rights", async () => {
+  await expect(
+    handlePrintingApi(
+      logoRequest("PUT", { scope: "COMPANY", logo: sampleLogo }),
+      env(),
+      repository,
+    ),
+  ).rejects.toMatchObject({ status: 403 });
+  await expect(
+    handlePrintingApi(
+      logoRequest("PUT", { scope: "BRANCH", logo: { ...sampleLogo, data: "AAAA" } }),
+      env(),
+      repository,
+    ),
+  ).rejects.toMatchObject({ status: 400 });
+  await handlePrintingApi(
+    logoRequest("PUT", { scope: "BRANCH", logo: sampleLogo }),
+    env(),
+    repository,
+  );
+  const state = await loadTenantConfigurationState(db, env() as never, actor.tenantId);
+  expect(JSON.stringify(state)).not.toContain(sampleLogo.data);
+  expect(state.documentTemplates.some((t) => t.documentType === "RECEIPT_LOGO")).toBe(false);
+  actor.permissions = [permissions.settingsHardwareView];
+  await expect(
+    handlePrintingApi(logoRequest("DELETE", undefined, "?scope=BRANCH"), env(), repository),
+  ).rejects.toMatchObject({ status: 403 });
+  // Anyone who can open the Printers page can see the current logo.
+  const seen = await (await handlePrintingApi(logoRequest("GET"), env(), repository))!.json();
+  expect(seen.branch).toMatchObject(sampleLogo);
 });

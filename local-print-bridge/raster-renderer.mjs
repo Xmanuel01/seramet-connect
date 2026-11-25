@@ -1,6 +1,7 @@
 import { FONT } from "./font-5x8.mjs";
 import { rasterMetrics, validateRenderJob } from "../printing-core/thermal-layout.mjs";
-import { encodeEscPos, finishCommands } from "./escpos-encoder.mjs";
+import { encodeEscPos, finishCommands, logoCommands } from "./escpos-encoder.mjs";
+import { renderRichForProfile, richBands } from "../printing-core/rich-render.mjs";
 
 // Bounded bands, never a full-page pixel allocation. Adjacent GS v 0 bands
 // contain no text line-feed commands, so table borders meet across band seams.
@@ -49,9 +50,21 @@ export function* rasterBands(layout, profile) {
 }
 export function encodePrintDocument(job, profile = job.profile) {
   validateRenderJob(job);
-  if (profile.renderingMode !== "RASTER_ESC_POS") return encodeEscPos(job.content, profile);
+  // The server only attaches a logo to bills, receipts and invoices.
+  const logo = job.logo ? logoCommands(job.logo) : undefined;
+  if (profile.renderingMode !== "RASTER_ESC_POS") {
+    const text = encodeEscPos(job.content, profile);
+    // The image prints as soon as it arrives; the document's own ESC @ after it
+    // only resets the unprinted line, so the logo stays on the paper.
+    return logo ? Buffer.concat([Buffer.from([27, 64]), logo, text]) : text;
+  }
   const chunks = [Buffer.from([27, 64, 27, 97, 0])];
-  for (const b of rasterBands(job.document, profile)) {
+  if (logo) chunks.push(logo);
+  // v3: the approved document typeset into one bitmap, sent in GS v 0 bands.
+  const bands = job.rich
+    ? richBands(renderRichForProfile(job.rich, profile.raster), profile.raster.maxBandHeight)
+    : rasterBands(job.document, profile);
+  for (const b of bands) {
     const stride = b.width / 8;
     chunks.push(
       Buffer.from([29, 118, 48, 0, stride & 255, stride >> 8, b.height & 255, b.height >> 8]),

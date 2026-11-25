@@ -2,6 +2,7 @@ import { clearInteractiveSignIn, revokeAllBrowserSessions } from "@/lib/auth-cli
 import { emptyRecords } from "@/lib/empty-records";
 import { pilotUnavailable } from "@/lib/pilot-unavailable";
 import { useAttendanceDelays } from "@/hooks/use-attendance-delays";
+import { useMarketplaceAttention } from "@/hooks/use-marketplace-attention";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -26,6 +27,7 @@ import {
   ReceiptText,
   Search,
   Sparkles,
+  Store,
   Sun,
   Trash2,
   Truck,
@@ -33,7 +35,13 @@ import {
   Users,
   WalletCards,
 } from "lucide-react";
-import { getVisibleNavGroups, navItemMatchesPath, roleCanAccessPath } from "./nav";
+import {
+  getVisibleNavGroups,
+  navItemIsActive,
+  navItemMatchesPath,
+  roleCanAccessPath,
+  type NavItem,
+} from "./nav";
 import { Logo } from "./Logo";
 import { CommandPalette } from "./CommandPalette";
 import { cn } from "@/lib/utils";
@@ -222,6 +230,30 @@ export function AppShell({
   const tenantBranchCount = platformState.branches.filter(
     (item) => item.tenantId === activeTenantId,
   ).length;
+  const deliveryProviderIds = new Set(
+    platformState.providers
+      .filter((provider) => provider.category === "DELIVERY")
+      .map((provider) => provider.id),
+  );
+  const marketplaceStoreItems: NavItem[] = platformState.connections
+    .filter(
+      (connection) =>
+        connection.tenantId === activeTenantId &&
+        deliveryProviderIds.has(connection.providerId) &&
+        connection.status !== "DISABLED" &&
+        (!branchId ||
+          branchId === "ALL" ||
+          !connection.branchId ||
+          connection.branchId === branchId),
+    )
+    .sort((a, b) => a.displayName.localeCompare(b.displayName))
+    .map((connection) => ({
+      label: connection.displayName,
+      to: "/marketplace",
+      icon: Store,
+      search: { store: connection.id },
+      child: true,
+    }));
   const visibleNavGroups = getVisibleNavGroups(
     role,
     branch,
@@ -231,10 +263,18 @@ export function AppShell({
   )
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => item.to !== "/enterprise" || tenantBranchCount > 1),
+      items: group.items
+        .filter((item) => item.to !== "/enterprise" || tenantBranchCount > 1)
+        // Each linked marketplace store gets its own entry under Marketplace.
+        .flatMap((item) =>
+          item.to === "/marketplace" ? [item, ...marketplaceStoreItems] : [item],
+        ),
     }))
     .filter((group) => group.items.length > 0);
   const path = useRouterState().location.pathname;
+  const locationSearch = useRouterState().location.search as Record<string, unknown>;
+  const isActive = (item: NavItem, siblings: readonly NavItem[] = []) =>
+    navItemIsActive(item, path, locationSearch, siblings);
   const unavailable = pilotUnavailable[path];
   const pageContent = unavailable ? (
     <section role="status" className="rounded-md border border-border bg-card p-6">
@@ -282,7 +322,11 @@ export function AppShell({
     (item) => !mutedCategories.includes(item.category),
   );
   const delayFeed = useAttendanceDelays();
-  const unreadCount = visibleNotifications.filter((item) => !item.read).length + delayFeed.unread;
+  const marketplaceFeed = useMarketplaceAttention();
+  const unreadCount =
+    visibleNotifications.filter((item) => !item.read).length +
+    delayFeed.unread +
+    marketplaceFeed.orders.length;
   const availableQuickCreate = useMemo(
     () =>
       quickCreateOptions.filter(
@@ -525,15 +569,17 @@ export function AppShell({
                 {g.group}
               </div>
               {g.items.map((item) => {
-                const active = navItemMatchesPath(item, path);
+                const active = isActive(item, g.items);
                 const Icon = item.icon;
                 return item.to ? (
                   <Link
-                    key={item.label + item.to}
+                    key={item.label + item.to + JSON.stringify(item.search ?? {})}
                     to={item.to}
+                    {...(item.search ? { search: item.search as never } : {})}
                     aria-current={active ? "page" : undefined}
                     className={cn(
                       "flex min-h-9 items-center gap-2.5 rounded-md px-2.5 text-[13px] transition-colors",
+                      item.child && "ml-4 text-[12px]",
                       active
                         ? "bg-accent font-semibold text-accent-foreground"
                         : "text-muted-foreground hover:bg-secondary hover:text-foreground",
@@ -615,8 +661,11 @@ export function AppShell({
               >
                 {g.items.map((item, idx, items) => {
                   const active =
-                    navItemMatchesPath(item, path) &&
-                    items.findIndex((candidate) => candidate.to === item.to) === idx;
+                    isActive(item, items) &&
+                    (Boolean(item.search) ||
+                      items.findIndex(
+                        (candidate) => candidate.to === item.to && !candidate.search,
+                      ) === idx);
                   const Icon = item.icon;
                   const content = (
                     <span
@@ -626,6 +675,7 @@ export function AppShell({
                           ? "bg-accent text-accent-foreground shadow-sm ring-1 ring-border/70"
                           : "text-muted-foreground hover:bg-secondary hover:text-foreground",
                         isCollapsed && "justify-center px-0",
+                        item.child && !isCollapsed && "ml-4 text-[12px]",
                       )}
                     >
                       {Icon && (
@@ -636,8 +686,9 @@ export function AppShell({
                   );
                   return item.to ? (
                     <Link
-                      key={item.label + item.to}
+                      key={item.label + item.to + JSON.stringify(item.search ?? {})}
                       to={item.to}
+                      {...(item.search ? { search: item.search as never } : {})}
                       title={item.label}
                       aria-current={active ? "page" : undefined}
                       onClick={onNavigate}
@@ -923,7 +974,10 @@ export function AppShell({
               <LogOut className="h-[18px] w-[18px] text-muted-foreground" />
             </button>
             <DropdownMenu>
-              <DropdownMenuTrigger className="relative grid h-9 w-9 place-items-center rounded-md hover:bg-secondary">
+              <DropdownMenuTrigger
+                aria-label={`Notifications (${unreadCount})`}
+                className="relative grid h-9 w-9 place-items-center rounded-md hover:bg-secondary"
+              >
                 <Bell className="h-[18px] w-[18px] text-muted-foreground" />
                 {unreadCount > 0 && (
                   <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-danger" />
@@ -946,6 +1000,26 @@ export function AppShell({
                   )}
                 </div>
                 <DropdownMenuSeparator />
+                {marketplaceFeed.enabled && (
+                  <DropdownMenuItem
+                    onSelect={(event) => {
+                      event.preventDefault();
+                      void marketplaceFeed.enableSound();
+                    }}
+                  >
+                    {marketplaceFeed.sound ? "Mute marketplace sound" : "Enable marketplace sound"}
+                  </DropdownMenuItem>
+                )}
+                {marketplaceFeed.unavailable && (
+                  <DropdownMenuItem disabled>Marketplace alerts disconnected</DropdownMenuItem>
+                )}
+                {marketplaceFeed.orders.length > 0 && (
+                  <DropdownMenuItem asChild>
+                    <Link to="/marketplace">
+                      {marketplaceFeed.orders.length} marketplace order(s) awaiting confirmation
+                    </Link>
+                  </DropdownMenuItem>
+                )}
                 {delayFeed.canManage && delayFeed.unread > 0 && (
                   <DropdownMenuItem asChild>
                     <Link to="/attendance">
@@ -1001,9 +1075,11 @@ export function AppShell({
                     </DropdownMenuItem>
                   );
                 })}
-                {visibleNotifications.length === 0 && delayFeed.unread === 0 && (
-                  <DropdownMenuItem disabled>No active notifications</DropdownMenuItem>
-                )}
+                {visibleNotifications.length === 0 &&
+                  delayFeed.unread === 0 &&
+                  marketplaceFeed.orders.length === 0 && (
+                    <DropdownMenuItem disabled>No active notifications</DropdownMenuItem>
+                  )}
                 {mutedCategories.length > 0 && (
                   <>
                     <DropdownMenuSeparator />

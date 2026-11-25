@@ -1,4 +1,5 @@
 import { permissions } from "@/platform/permissions";
+import { clearSavedOperationalMenus } from "@/hooks/operational-menu-cache";
 import { clearPosDrafts } from "@/lib/pos-draft";
 export type AuthRestaurant = {
   tenantId: string;
@@ -145,6 +146,7 @@ export function hasInteractiveSignIn() {
 
 export function clearInteractiveSignIn() {
   clearPosDrafts();
+  clearSavedOperationalMenus();
   if (typeof window !== "undefined") window.sessionStorage?.removeItem(interactiveSignInKey);
 }
 

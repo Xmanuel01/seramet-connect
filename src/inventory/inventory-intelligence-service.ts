@@ -9507,17 +9507,24 @@ export class InventoryIntelligenceService {
       const row = await this.balance(branchId, warehouseId, itemId);
       return row.average_unit_cost_minor;
     }
+    // The average is rounded here, in whole minor units, so it is the same on every database:
+    // PostgreSQL divides summed totals as decimals and returned a fractional cost, which the
+    // costing checks refuse.
     const row = await this.db
       .prepare(
-        `SELECT CASE WHEN SUM(quantity_minor)>0
-          THEN (SUM(total_value_minor)*1000000 + SUM(quantity_minor)/2)/SUM(quantity_minor)
-          ELSE 0 END AS cost
+        `SELECT COALESCE(SUM(total_value_minor),0) AS value_minor,
+                COALESCE(SUM(quantity_minor),0) AS quantity_minor
          FROM inventory_balances WHERE tenant_id=? AND item_id=?
            AND (? IS NULL OR branch_id=?)`,
       )
       .bind(this.actor.tenantId, itemId, branchId ?? null, branchId ?? null)
-      .first<{ cost: number }>();
-    return row?.cost ?? 0;
+      .first<{ value_minor: number; quantity_minor: number }>();
+    const quantity = BigInt(row?.quantity_minor ?? 0);
+    if (quantity <= 0n) return 0;
+    const cost = (BigInt(row?.value_minor ?? 0) * 1_000_000n + quantity / 2n) / quantity;
+    if (cost > BigInt(Number.MAX_SAFE_INTEGER))
+      throw new Error("Weighted item cost exceeds Seramet safe range");
+    return Number(cost);
   }
 
   private async assertSupplierAllowedByEnterprisePolicy(branchId: string, supplierId: string) {

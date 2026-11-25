@@ -1,3 +1,21 @@
+import {
+  readStoreMenu,
+  saveStoreMenu,
+  StoreMenuError,
+} from "@/integrations/marketplace/store-menu";
+import {
+  exchangeUberAuthorizationCode,
+  listUberStores,
+  sealUberLinkTicket,
+  uberCallbackPath,
+  uberDeliveryEnvironment,
+  uberLinkReturnPath,
+  uberPlatformCredentials,
+  uberWebhookPath,
+  verifyUberLinkState,
+  verifyUberSignature,
+} from "@/integrations/delivery/uber-eats/store-link";
+import { uberEatsDefinition } from "@/integrations/delivery/uber-eats/adapter";
 import { unmatchedDirectPayments } from "@/payments/mpesa-matching";
 import { parseMajorAmount } from "@/payments/money";
 import { withCachedSchemaCheck } from "@/server/database/schema-check-cache";
@@ -6,9 +24,11 @@ import type { PaymentOperationsState } from "@/payments/types";
 import {
   SerametHttpError,
   authenticateSerametRequest,
+  authenticatedTenantOf,
   authorizeBranchRead,
   authorizeSerametMutation,
   firstActiveTenantId,
+  isDevelopmentAuthRequest,
   type SerametEnv,
   type ServerActor,
 } from "@/lib/seramet-auth";
@@ -85,6 +105,7 @@ import { handleObjectStorageApi } from "@/server/object-storage-api";
 import { handleRealtimeApi } from "@/server/realtime-api";
 import { findOverdueDurableWork } from "@/server/worker-health";
 import { handlePrintingApi } from "@/server/printing-api";
+import { handleEtimsApi } from "@/server/etims/etims-api";
 import { handleScannerInternalApi } from "@/server/scanner-internal-api";
 
 type MutationRequest = {
@@ -93,6 +114,14 @@ type MutationRequest = {
   idempotencyKey?: string;
   expectedRevision?: number;
 };
+
+function authorizeMarketplaceConnection(actor: ServerActor, connectionId: string) {
+  const connection = getConfigurationRepository()
+    .listConnections(actor.tenantId)
+    .find((item) => item.id === connectionId);
+  if (!connection?.branchId) throw new SerametHttpError(404, "Branch connection not found");
+  authorizeBranchRead(actor, actor.tenantId, connection.branchId);
+}
 
 type SnapshotReplaceRequest = {
   state?: TransactionState;
@@ -115,7 +144,11 @@ const configurationChangingPrefixes = [
   "/api/seramet/tables",
   "/api/seramet/inventory/warehouses",
 ];
-const configurationNeutralPrefixes = ["/api/seramet/integrations/webhooks"];
+const configurationNeutralPrefixes = [
+  "/api/seramet/integrations/webhooks",
+  // Uber sign-in only reads the Uber account; linking the store happens in Setup Centre.
+  uberCallbackPath,
+];
 
 function changesConfiguration(path: string) {
   if (configurationNeutralPrefixes.some((prefix) => path.startsWith(prefix))) return false;
@@ -127,8 +160,9 @@ function changesConfiguration(path: string) {
 
 export async function handleSerametApiRequest(request: Request, env: SerametEnv) {
   const response = await routeSerametApiRequest(request, env);
-  // Every server caches configuration until the shared revision moves; a successful change
-  // bumps it so all of them read it fresh on their next request.
+  // Every server caches configuration until a shared revision moves; a successful change
+  // bumps it so all of them read it fresh on their next request. A change made by a signed-in
+  // user bumps only their restaurant; one with no known restaurant bumps every restaurant.
   const path = new URL(request.url).pathname;
   if (
     env?.SERAMET_DB &&
@@ -136,7 +170,7 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
     response.status < 400 &&
     changesConfiguration(path)
   )
-    await invalidateAuthoritativeConfiguration(env.SERAMET_DB);
+    await invalidateAuthoritativeConfiguration(env.SERAMET_DB, authenticatedTenantOf(request));
   return response;
 }
 
@@ -275,6 +309,8 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
     if (emailResponse) return emailResponse;
     const printingResponse = await handlePrintingApi(request, env, repo);
     if (printingResponse) return printingResponse;
+    const etimsResponse = await handleEtimsApi(request, env);
+    if (etimsResponse) return etimsResponse;
 
     const registrationResponse = await handleRegistrationApi(request, env);
     if (registrationResponse) return registrationResponse;
@@ -407,6 +443,17 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
       );
     }
 
+    // Uber sends every store's events to the one webhook URL of Seramet's Uber app.
+    if (url.pathname === uberWebhookPath && request.method === "POST") {
+      // Rate-limited per Uber store after the signature check, inside the handler, so unsigned
+      // traffic cannot use up the quota of real deliveries.
+      return await receiveUberPlatformWebhook(request, env);
+    }
+    if (url.pathname === uberCallbackPath && request.method === "GET") {
+      await consumeRateLimit(env, "uber-eats:callback", sensitiveRateLimits.webhook);
+      return await completeUberSignIn(url, env);
+    }
+
     // An optional last segment carries the connection's webhook key for providers, such as
     // M-Pesa, that cannot send a signature header. `/validate` answers M-Pesa's pre-payment check.
     const integrationWebhookRoute =
@@ -450,10 +497,138 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
         permissions.settingsIntegrationManage,
         permissions.auditView,
       ]);
+      const diagnostics = await createIntegrationRuntime(env).diagnostics(actor.tenantId);
+      const allowedConnections = new Set(
+        getConfigurationRepository()
+          .listConnections(actor.tenantId)
+          .filter((connection) => {
+            if (!connection.branchId) return actor.branchScope.type === "ALL";
+            try {
+              authorizeBranchRead(actor, actor.tenantId, connection.branchId);
+              return true;
+            } catch {
+              return false;
+            }
+          })
+          .map((connection) => connection.id),
+      );
       return json({
         ok: true,
-        ...(await createIntegrationRuntime(env).diagnostics(actor.tenantId)),
+        ...Object.fromEntries(
+          Object.entries(diagnostics).map(([key, records]) => [
+            key,
+            records.filter((record) => allowedConnections.has(record.connectionId)),
+          ]),
+        ),
       });
+    }
+
+    if (
+      url.pathname === "/api/seramet/integrations/marketplace/attention" &&
+      request.method === "GET"
+    ) {
+      const actor = await requirePermission(request, env, permissions.integrationsOrdersManage);
+      const branchId = url.searchParams.get("branchId") ?? "";
+      if (!branchId) throw new SerametHttpError(400, "Branch is required");
+      authorizeBranchRead(actor, actor.tenantId, branchId);
+      const state = await createTransactionRepository(env.SERAMET_DB, env).loadState(
+        actor.tenantId,
+      );
+      const orders = state.orders
+        .filter(
+          (order) =>
+            order.branchId === branchId &&
+            order.status === "HELD" &&
+            order.externalSource &&
+            !order.externalSource.metadata["acceptanceConfirmedAt"],
+        )
+        .map((order) => ({
+          id: order.id,
+          reference:
+            order.externalSource!.providerDisplayReference ?? order.externalSource!.externalOrderId,
+          receivedAt: order.externalSource!.receivedAt,
+        }));
+      return json({ ok: true, orders });
+    }
+    if (
+      url.pathname === "/api/seramet/integrations/marketplace/ready-time" &&
+      request.method === "POST"
+    ) {
+      const actor = await requirePermission(request, env, permissions.integrationsOrdersManage);
+      const input = await readJson<{ branchId?: string; orderId?: string; readyAt?: string }>(
+        request,
+      );
+      if (!input.branchId || !input.orderId || typeof input.readyAt !== "string")
+        throw new SerametHttpError(400, "Branch, order and ready time are required");
+      authorizeBranchRead(actor, actor.tenantId, input.branchId);
+      const queued = await createIntegrationRuntime(env).queueReadyTime({
+        tenantId: actor.tenantId,
+        branchId: input.branchId,
+        orderId: input.orderId,
+        readyAt: input.readyAt,
+        actorId: actor.id,
+      });
+      return json({ ok: true, queued }, 202);
+    }
+    if (
+      url.pathname === "/api/seramet/integrations/marketplace/decision/recover" &&
+      request.method === "POST"
+    ) {
+      const actor = await requirePermission(request, env, permissions.integrationsOrdersManage);
+      const input = await readJson<{ branchId?: string; recordId?: string }>(request);
+      if (!input.branchId || !input.recordId)
+        throw new SerametHttpError(400, "Branch and decision record are required");
+      authorizeBranchRead(actor, actor.tenantId, input.branchId);
+      const record = await createIntegrationRuntime(env).recoverMarketplaceDecision(
+        actor.tenantId,
+        input.branchId,
+        input.recordId,
+        actor.id,
+      );
+      return json({ ok: true, record });
+    }
+    if (
+      url.pathname === "/api/seramet/integrations/marketplace/decision" &&
+      request.method === "POST"
+    ) {
+      const actor = await requirePermission(request, env, permissions.integrationsOrdersManage);
+      const input = await readJson<{
+        branchId?: string;
+        orderId?: string;
+        decision?: string;
+        prepMinutes?: number;
+        reason?: string;
+        rejectedInProviderApp?: boolean;
+      }>(request);
+      if (
+        !input.branchId ||
+        !input.orderId ||
+        !["ACCEPT", "REJECT"].includes(input.decision ?? "") ||
+        (input.reason !== undefined && typeof input.reason !== "string")
+      )
+        throw new SerametHttpError(400, "Order, branch and a supported decision are required");
+      authorizeBranchRead(actor, actor.tenantId, input.branchId);
+      if (input.decision === "REJECT" && input.rejectedInProviderApp === true) {
+        const rejected = await createIntegrationRuntime(env).rejectInProviderApp({
+          tenantId: actor.tenantId,
+          branchId: input.branchId,
+          orderId: input.orderId,
+          actorId: actor.id,
+          rejectedInProviderApp: true,
+          ...(input.reason ? { reason: input.reason } : {}),
+        });
+        return json({ ok: true, rejected }, 200);
+      }
+      const queued = await createIntegrationRuntime(env).decideMarketplaceOrder({
+        tenantId: actor.tenantId,
+        branchId: input.branchId,
+        orderId: input.orderId,
+        actorId: actor.id,
+        decision: input.decision as "ACCEPT" | "REJECT",
+        ...(input.prepMinutes !== undefined ? { prepMinutes: input.prepMinutes } : {}),
+        ...(input.reason ? { reason: input.reason } : {}),
+      });
+      return json({ ok: true, queued }, 202);
     }
 
     if (
@@ -463,10 +638,48 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
       const actor = await requirePermission(request, env, permissions.integrationsMenuSync);
       const connectionId = url.searchParams.get("connectionId");
       if (!connectionId) throw new SerametHttpError(400, "connectionId is required");
+      authorizeMarketplaceConnection(actor, connectionId);
       return json({
         ok: true,
         ...(await createIntegrationRuntime(env).previewMenuSync(actor.tenantId, connectionId)),
       });
+    }
+
+    if (url.pathname === "/api/seramet/integrations/marketplace/store-menu") {
+      if (request.method === "GET") {
+        const actor = await requirePermission(request, env, permissions.integrationsMenuSync);
+        const connectionId = url.searchParams.get("connectionId");
+        if (!connectionId) throw new SerametHttpError(400, "connectionId is required");
+        authorizeMarketplaceConnection(actor, connectionId);
+        if (!env.SERAMET_DB) throw new SerametHttpError(503, "Database unavailable");
+        return json({
+          ok: true,
+          menu: await storeMenuCall(() =>
+            readStoreMenu(env.SERAMET_DB!, actor.tenantId, connectionId),
+          ),
+        });
+      }
+      if (request.method === "POST") {
+        const actor = await requirePermission(request, env, permissions.integrationsMenuSync);
+        const input = await readJson<{ connectionId?: string; itemIds?: unknown }>(request);
+        if (!input.connectionId) throw new SerametHttpError(400, "connectionId is required");
+        authorizeMarketplaceConnection(actor, input.connectionId);
+        if (!env.SERAMET_DB) throw new SerametHttpError(503, "Database unavailable");
+        const itemIds =
+          input.itemIds === null
+            ? null
+            : Array.isArray(input.itemIds) &&
+                input.itemIds.length <= 5000 &&
+                input.itemIds.every((id) => typeof id === "string")
+              ? (input.itemIds as string[])
+              : undefined;
+        if (itemIds === undefined)
+          throw new SerametHttpError(400, "itemIds must be a list of menu item ids, or null");
+        const saved = await storeMenuCall(() =>
+          saveStoreMenu(env.SERAMET_DB!, actor.tenantId, input.connectionId!, itemIds),
+        );
+        return json({ ok: true, ...saved });
+      }
     }
 
     if (
@@ -481,6 +694,7 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
       }>(request);
       if (!input.connectionId || !input.confirmedMenuHash)
         throw new SerametHttpError(400, "connectionId and confirmedMenuHash are required");
+      authorizeMarketplaceConnection(actor, input.connectionId);
       const result = await createIntegrationRuntime(env).queueMenuSync(
         actor.tenantId,
         input.connectionId,
@@ -502,15 +716,40 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
         internalItemId?: string;
         available?: boolean;
         quantityAvailable?: number;
+        connectionIds?: string[];
+        restoreAt?: string;
+        reason?: string;
+        resourceType?: "ITEM" | "MODIFIER";
       }>(request);
       if (!input.branchId || !input.internalItemId || typeof input.available !== "boolean")
         throw new SerametHttpError(400, "branchId, internalItemId and available are required");
+      if (input.resourceType !== undefined && !["ITEM", "MODIFIER"].includes(input.resourceType))
+        throw new SerametHttpError(400, "Unsupported menu resource");
       authorizeBranchRead(actor, actor.tenantId, input.branchId);
+      if (
+        (input.restoreAt !== undefined && typeof input.restoreAt !== "string") ||
+        (input.reason !== undefined &&
+          (typeof input.reason !== "string" || input.reason.length > 500))
+      )
+        throw new SerametHttpError(400, "Invalid restoration time or reason");
+      if (
+        input.connectionIds !== undefined &&
+        (!Array.isArray(input.connectionIds) ||
+          !input.connectionIds.length ||
+          input.connectionIds.some((id) => typeof id !== "string" || !id))
+      )
+        throw new SerametHttpError(400, "Select at least one valid marketplace connection");
       const queued = await createIntegrationRuntime(env).queueAvailabilitySync({
         tenantId: actor.tenantId,
         branchId: input.branchId,
         internalItemId: input.internalItemId,
         available: input.available,
+        manual: true,
+        resourceType: input.resourceType,
+        actorId: actor.id,
+        ...(input.restoreAt ? { restoreAt: input.restoreAt } : {}),
+        ...(input.reason ? { reason: input.reason } : {}),
+        ...(input.connectionIds ? { connectionIds: input.connectionIds } : {}),
         ...(input.quantityAvailable === undefined
           ? {}
           : { quantityAvailable: input.quantityAvailable }),
@@ -539,7 +778,9 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
           400,
           "connectionId, internalItemId, price and currency are required",
         );
+      authorizeMarketplaceConnection(actor, input.connectionId);
       const queued = await createIntegrationRuntime(env).queuePriceSync({
+        actorId: actor.id,
         tenantId: actor.tenantId,
         connectionId: input.connectionId,
         internalItemId: input.internalItemId,
@@ -554,17 +795,28 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
       request.method === "POST"
     ) {
       const actor = await requirePermission(request, env, permissions.integrationsStoreManage);
-      const input = await readJson<{ connectionId?: string; status?: string }>(request);
+      const input = await readJson<{
+        connectionId?: string;
+        status?: string;
+        startsAt?: string;
+        resumeAt?: string;
+      }>(request);
       if (
         !input.connectionId ||
         !input.status ||
         !["OPEN", "PAUSED", "CLOSED_TEMPORARILY"].includes(input.status)
       )
         throw new SerametHttpError(400, "A supported connectionId and status are required");
+      authorizeMarketplaceConnection(actor, input.connectionId);
+      if (input.resumeAt !== undefined && typeof input.resumeAt !== "string")
+        throw new SerametHttpError(400, "Invalid reopening time");
+      if (input.startsAt !== undefined && typeof input.startsAt !== "string")
+        throw new SerametHttpError(400, "Invalid pause start time");
       const queued = await createIntegrationRuntime(env).queueStoreStatus(
         actor.tenantId,
         input.connectionId,
         input.status as import("@/integrations/marketplace/types").MarketplaceStoreStatus,
+        { startsAt: input.startsAt, resumeAt: input.resumeAt, actorId: actor.id },
       );
       return json({ ok: true, queued }, 202);
     }
@@ -596,6 +848,7 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
       const actor = await requirePermission(request, env, permissions.integrationsOrdersManage);
       const input = await readJson<{ connectionId?: string }>(request);
       if (!input.connectionId) throw new SerametHttpError(400, "connectionId is required");
+      authorizeMarketplaceConnection(actor, input.connectionId);
       return json({
         ok: true,
         ...(await createIntegrationRuntime(env).recoverActiveOrders(
@@ -610,6 +863,7 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
     );
     if (connectionTestRoute && request.method === "POST") {
       const actor = await requireIntegrationManager(request, env);
+      authorizeMarketplaceConnection(actor, decodeURIComponent(connectionTestRoute[1]!));
       const health = await createIntegrationRuntime(env).testConnection(
         actor.tenantId,
         decodeURIComponent(connectionTestRoute[1]!),
@@ -776,6 +1030,147 @@ async function receiveIntegrationWebhook(
   return integrationWebhookAcknowledgement(providerCode, result);
 }
 
+/**
+ * Uber's app-wide webhook: checks the signature with the platform client secret, then hands the
+ * event to the one restaurant connection that maps the Uber store (`meta.user_id`). Events for a
+ * store no restaurant has linked are acknowledged and dropped so Uber does not keep retrying.
+ */
+export async function receiveUberPlatformWebhook(request: Request, env: SerametEnv) {
+  const rawBody = await readBoundedBody(request, 1_048_576);
+  const environment = uberDeliveryEnvironment(request.headers.get("x-environment"));
+  const credentials = uberPlatformCredentials(env, environment);
+  if (!credentials) throw new SerametHttpError(503, "Uber Eats is not configured on this server");
+  const signature = request.headers.get("x-uber-signature") ?? "";
+  if (!(await verifyUberSignature(rawBody, signature, credentials.webhookSigningSecret)))
+    throw new SerametHttpError(401, "Webhook signature is invalid");
+  let storeId: string | undefined;
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(rawBody)) as {
+      meta?: { user_id?: unknown };
+    };
+    storeId = typeof parsed.meta?.user_id === "string" ? parsed.meta.user_id : undefined;
+  } catch {
+    throw new SerametHttpError(400, "Webhook body is not JSON");
+  }
+  if (!storeId || !env.SERAMET_DB) return new Response(null, { status: 200 });
+  await consumeRateLimit(env, `webhook:UBER_EATS:${storeId}`, sensitiveRateLimits.webhook);
+  const owners =
+    (
+      await env.SERAMET_DB.prepare(
+        `SELECT m.connection_id FROM provider_mappings m
+         JOIN provider_connections c ON c.tenant_id=m.tenant_id AND c.id=m.connection_id
+         JOIN tenants t ON t.id=m.tenant_id AND t.active=1
+         WHERE m.provider_id=? AND m.resource_type='STORE' AND m.status='MAPPED'
+           AND LOWER(m.external_id)=LOWER(?) AND c.environment=? AND c.status<>'DISABLED'
+         LIMIT 2`,
+      )
+        .bind(uberEatsDefinition.id, storeId, environment)
+        .all<{ connection_id: string }>()
+    ).results ?? [];
+  if (owners.length !== 1) {
+    console.warn(
+      JSON.stringify({
+        event: "uber_webhook_unrouted",
+        environment,
+        reason: owners.length ? "store linked to more than one connection" : "store not linked",
+      }),
+    );
+    return new Response(null, { status: 200 });
+  }
+  return receiveIntegrationWebhook(
+    new Request(request.url, { method: "POST", headers: request.headers, body: rawBody }),
+    env,
+    uberEatsDefinition.code,
+    owners[0]!.connection_id,
+  );
+}
+
+/** Reads at most `limit` bytes, whatever Content-Length claims, and refuses anything larger. */
+async function readBoundedBody(request: Request, limit: number) {
+  if (Number(request.headers.get("content-length") ?? 0) > limit)
+    throw new SerametHttpError(413, "Webhook body is too large");
+  if (!request.body) return new Uint8Array();
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      throw new SerametHttpError(413, "Webhook body is too large");
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
+/**
+ * Uber redirects the browser here after the restaurant signs in. The merchant token and its
+ * store list go back to Setup Centre sealed in the URL fragment for the store-choice step.
+ */
+async function completeUberSignIn(url: URL, env: SerametEnv) {
+  const back = (fragment: string) =>
+    new Response(null, {
+      status: 303,
+      headers: {
+        Location: `${uberLinkReturnPath}?section=DELIVERY_INTEGRATIONS#${fragment}`,
+        "Cache-Control": "no-store",
+        "Referrer-Policy": "no-referrer",
+      },
+    });
+  const secret = env.SERAMET_JWT_SECRET;
+  const state = secret
+    ? await verifyUberLinkState(url.searchParams.get("state") ?? "", secret)
+    : undefined;
+  if (!secret || !state) return back("uberError=expired");
+  if (url.searchParams.get("error")) return back("uberError=declined");
+  const credentials = uberPlatformCredentials(env, state.environment);
+  const code = url.searchParams.get("code");
+  if (!credentials || !code || !env.SERAMET_CALLBACK_BASE_URL) return back("uberError=config");
+  try {
+    const merchantAccessToken = await exchangeUberAuthorizationCode({
+      fetch: (input, init) => fetch(input, init),
+      environment: state.environment,
+      ...credentials,
+      redirectUri: `${env.SERAMET_CALLBACK_BASE_URL.replace(/\/$/, "")}${uberCallbackPath}`,
+      code,
+    });
+    const stores = await listUberStores({
+      fetch: (input, init) => fetch(input, init),
+      environment: state.environment,
+      accessToken: merchantAccessToken,
+    });
+    const ticket = await sealUberLinkTicket({ ...state, merchantAccessToken, stores }, secret);
+    return back(`uberLink=${ticket}`);
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        event: "uber_sign_in_failed",
+        message: error instanceof Error ? error.message : "unknown",
+      }),
+    );
+    const missingScope = error instanceof Error && error.message.includes("eats.pos_provisioning");
+    return back(missingScope ? "uberError=scope" : "uberError=uber");
+  }
+}
+
+async function storeMenuCall<T>(work: () => Promise<T>) {
+  try {
+    return await work();
+  } catch (error) {
+    if (error instanceof StoreMenuError) throw new SerametHttpError(error.status, error.message);
+    throw error;
+  }
+}
+
 export function integrationWebhookAcknowledgement(
   providerCode: string,
   result: Record<string, unknown>,
@@ -832,6 +1227,22 @@ async function getOperationalMenuCatalog(request: Request, env: SerametEnv) {
   const url = new URL(request.url);
   const branchId = url.searchParams.get("branchId")?.trim() || actor.branchId;
   authorizeBranchRead(actor, actor.tenantId, branchId);
+  const canSell = actor.permissions.includes(permissions.ordersCreate);
+  // The tax and service rules load alongside the items rather than after them.
+  const now = new Date().toISOString();
+  const rulesQuery = canSell
+    ? env.SERAMET_DB.prepare(
+        `SELECT id,code,rule_type,rate_bps,calculation_mode
+     FROM tax_service_rules
+     WHERE tenant_id=? AND active=1 AND (branch_id=? OR branch_id IS NULL)
+       AND effective_from<=? AND (effective_to IS NULL OR effective_to>?)
+     ORDER BY CASE WHEN branch_id=? THEN 0 ELSE 1 END,id`,
+      )
+        .bind(actor.tenantId, branchId, now, now, branchId)
+        .all()
+    : undefined;
+  // Awaited below; this only keeps a failure from going unobserved if the items query fails.
+  void rulesQuery?.catch(() => undefined);
   const rows = await env.SERAMET_DB.prepare(
     `SELECT m.id,m.code,m.sku,m.barcode,m.name,m.category_code,m.description,m.selling_price_minor,
             m.currency,m.tax_rule_id,m.service_charge_applicable,bs.station_id,
@@ -848,38 +1259,37 @@ async function getOperationalMenuCatalog(request: Request, env: SerametEnv) {
   )
     .bind(branchId, branchId, actor.tenantId)
     .all<Record<string, unknown>>();
-  // The till only needs the item photo from the import payload, not the rest of it.
+  // Expose only display/pricing fields, never the full import payload.
   const items = (rows.results ?? []).map(({ payload_json, ...row }) => ({
     ...row,
-    image_url: menuImageUrl(payload_json),
+    ...menuDisplayFields(payload_json),
   }));
-  if (!actor.permissions.includes(permissions.ordersCreate)) {
+  if (!canSell || !rulesQuery) {
     return json({
       ok: true,
       branchId,
-      items: items.map((row) => ({ ...row, effective_price_minor: 0 })),
+      items: items.map((row) => ({ ...row, effective_price_minor: 0, online_price_minor: null })),
       pricingRules: [],
     });
   }
-  const rules = await env.SERAMET_DB.prepare(
-    `SELECT id,code,rule_type,rate_bps,calculation_mode
-     FROM tax_service_rules
-     WHERE tenant_id=? AND active=1 AND (branch_id=? OR branch_id IS NULL)
-       AND effective_from<=? AND (effective_to IS NULL OR effective_to>?)
-     ORDER BY CASE WHEN branch_id=? THEN 0 ELSE 1 END,id`,
-  )
-    .bind(actor.tenantId, branchId, new Date().toISOString(), new Date().toISOString(), branchId)
-    .all();
+  const rules = await rulesQuery;
   return json({ ok: true, branchId, items, pricingRules: rules.results ?? [] });
 }
 
-function menuImageUrl(payloadJson: unknown) {
-  if (typeof payloadJson !== "string" || !payloadJson.includes("imageUrl")) return null;
+function menuDisplayFields(payloadJson: unknown) {
+  const empty = { image_url: null, online_price_minor: null };
+  if (typeof payloadJson !== "string") return empty;
   try {
-    const value = (JSON.parse(payloadJson) as Record<string, unknown>)["imageUrl"];
-    return typeof value === "string" ? value : null;
+    const payload = JSON.parse(payloadJson) as Record<string, unknown> | null;
+    const image = payload?.["imageUrl"];
+    const online = payload?.["onlinePriceMinor"];
+    return {
+      image_url: typeof image === "string" ? image : null,
+      online_price_minor:
+        typeof online === "number" && Number.isSafeInteger(online) && online >= 0 ? online : null,
+    };
   } catch {
-    return null;
+    return empty;
   }
 }
 
@@ -1687,7 +2097,8 @@ async function saveIdempotency(
 
 async function webhookTenantId(request: Request, env: SerametEnv) {
   let tenantId = request.headers.get("x-seramet-tenant-id")?.trim();
-  if (!tenantId && request.headers.get("x-seramet-dev-auth") === "enabled") {
+  // Only local development may omit the tenant; elsewhere a webhook must name its restaurant.
+  if (!tenantId && isDevelopmentAuthRequest(request, env)) {
     tenantId =
       (env.SERAMET_DB ? await firstActiveTenantId(env.SERAMET_DB) : undefined) ??
       LOCAL_PILOT_TENANT_ID;

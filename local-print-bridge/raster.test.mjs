@@ -133,7 +133,8 @@ test("oversized, unsupported, mismatched and altered layouts fail before any tra
     (j) => (j.profile.raster.maxBandHeight = 4096),
     (j) => (j.profile.raster.maxBytes = 4096),
     (j) => (j.profile.raster.maxHeightDots = 1),
-    (j) => (j.target.transport = "WINDOWS"),
+    // Image mode now also runs over the Windows RAW spooler; an unknown transport still fails.
+    (j) => (j.target.transport = "SERIAL"),
     (j) => (j.profile.renderingMode = "UNKNOWN"),
     (j) => (j.document.rows[1].text = "altered"),
     (j) => (j.document.renderer = "unknown"),
@@ -268,4 +269,39 @@ test("HTTP preflight rejects invalid raster before reservation; worker renders o
     await bridge.close();
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("a receipt logo prints centred above the document in text and raster mode", () => {
+  // 16 x 2 dots: a solid top row and an empty bottom row.
+  const logo = { width: 16, height: 2, data: Buffer.from([0xff, 0xff, 0, 0]).toString("base64") };
+  const header = Buffer.from([
+    27, 97, 1, 29, 118, 48, 0, 2, 0, 2, 0, 0xff, 0xff, 0, 0, 10, 27, 97, 0,
+  ]);
+  const raster = { ...job(), documentType: "RECEIPT", logo };
+  const rasterBytes = encodePrintDocument(raster);
+  assert.equal(rasterBytes.indexOf(header), 5, "logo follows the raster reset");
+  const textProfile = { paperWidth: "58mm", encoding: "ascii", cutter: "partial" };
+  const text = { ...raster, v: 1, document: undefined, profile: textProfile };
+  delete text.document;
+  const textBytes = encodePrintDocument(text);
+  assert.equal(textBytes.indexOf(header), 2, "logo follows ESC @");
+  assert.ok(textBytes.indexOf(Buffer.from("KITCHEN ORDER")) > header.length);
+  const plain = encodePrintDocument({ ...text, logo: undefined });
+  assert.ok(!plain.includes(Buffer.from([29, 118, 48, 0])));
+});
+
+test("malformed or oversized logos are refused before any transport", () => {
+  const base = { ...job(), documentType: "RECEIPT" };
+  for (const logo of [
+    { width: 16, height: 2, data: "AAAA" }, // wrong length
+    { width: 400, height: 2, data: "A".repeat(68) }, // wider than any receipt
+    { width: 16, height: 201, data: "A".repeat(536) }, // taller than allowed
+    { width: 16, height: 2, data: "AAAAAA==", extra: 1 },
+    { width: 16, height: 2, data: "<script>" },
+  ])
+    assert.throws(() => validateRenderJob({ ...base, logo }), /INVALID_LOGO/);
+  const narrow = job("58mm", 256);
+  narrow.documentType = "RECEIPT";
+  narrow.logo = { width: 384, height: 1, data: Buffer.alloc(48).toString("base64") };
+  assert.throws(() => validateRenderJob(narrow), /RASTER_SIZE_LIMIT/);
 });

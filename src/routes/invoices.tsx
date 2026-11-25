@@ -4,8 +4,11 @@ import { useBusinessToday } from "@/hooks/use-business-today";
 import { useEffect, useRef, useState } from "react";
 import { DocumentEmailDialog } from "@/components/app/DocumentEmailDialog";
 import { DocumentTextPreview } from "@/components/app/DocumentTextPreview";
+import type { RichDocument } from "@/printing/documents";
 import { InvoiceSplitDialog } from "@/components/app/InvoiceSplitDialog";
 import { invoiceDisplayName } from "@/lib/invoice-split";
+import { AppOrderCollect } from "@/components/app/AppOrderCollect";
+import { appOrderBalance, appOrderBalanceLabel } from "@/payments/app-order-balance";
 import { permissions } from "@/platform/permissions";
 import { AlertTriangle, CheckCircle2, Download, FileText, Mail, MessageCircle } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
@@ -87,6 +90,7 @@ type PrintPreviewState = {
   documentType: "BILL" | "RECEIPT" | "INVOICE";
   template: string;
   content: string;
+  rich?: RichDocument;
 };
 
 function InvoiceDeliveryActions({
@@ -168,6 +172,7 @@ function Invoices() {
   const [printPreview, setPrintPreview] = useState<PrintPreviewState | null>(null);
   const [emailInvoice, setEmailInvoice] = useState<{ id: string; scope: string } | null>(null);
   const [warning, setWarning] = useState("");
+  const [notice, setNotice] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | "Paid" | "Unpaid" | "Pending">("Unpaid");
   const {
     activeTenantId,
@@ -189,6 +194,7 @@ function Invoices() {
   );
   const periodDate = chosenDate ?? businessToday;
   const canSplit = hasPermission(permissions.invoicesManage);
+  const canCollect = hasPermission(permissions.paymentsCollect);
   const scope = `${activeTenantId}:${branchId}:${currentUser.id}`;
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
@@ -303,14 +309,37 @@ function Invoices() {
       if (statusFilter === "Pending") return row.status === "PENDING";
       return true;
     });
-  const outstanding = activeRows.reduce((sum, row) => sum + row.total - row.paid, 0);
+  // A delivery-app invoice is open for what the customer still has to pay plus what the app
+  // still owes; neither counts as an ordinary invoice payment.
+  const rowOutstanding = (row: BillingRecord) => {
+    const balance = appOrderBalance(state, row.id);
+    return balance ? balance.toCollect + balance.appOwes : row.total - row.paid;
+  };
+  const outstanding = activeRows.reduce((sum, row) => sum + rowOutstanding(row), 0);
   const paid = activeRows.reduce((sum, row) => sum + row.paid, 0);
   const overdue = activeRows
     .filter((row) => row.paymentStatus !== "PAID")
     .reduce((sum, row) => sum + row.total - row.paid, 0);
-  const showSettleColumn = activeRows.some((row) =>
-    ["UNPAID", "PARTIAL"].includes(row.paymentStatus),
+  const showSettleColumn = activeRows.some(
+    (row) =>
+      ["UNPAID", "PARTIAL"].includes(row.paymentStatus) ||
+      (appOrderBalance(state, row.id)?.toCollect ?? 0) > 0,
   );
+  // The pay-on-delivery part of a delivery-app invoice, cleared with what was actually paid.
+  const collectAction = (row: BillingRecord) => {
+    const balance = appOrderBalance(state, row.id);
+    return balance ? (
+      <AppOrderCollect
+        invoice={row}
+        invoiceName={invoiceDisplayName(row.id)}
+        balance={balance}
+        tenantId={activeTenantId}
+        canCollect={canCollect}
+        mutate={mutate}
+        onDone={setNotice}
+      />
+    ) : null;
+  };
 
   const logDelivery = (entry: DeliveryLogEntry) => {
     setDeliveryLog((current) => [entry, ...current].slice(0, 8));
@@ -327,7 +356,10 @@ function Invoices() {
   };
 
   const settlementLabel = (invoice: BillingRecord) => {
-    if (invoice.paymentStatus === "PROVIDER_RECEIVABLE") return "Provider receivable";
+    if (invoice.paymentStatus === "PROVIDER_RECEIVABLE") {
+      const balance = appOrderBalance(state, invoice.id);
+      return balance ? appOrderBalanceLabel(balance) : "Owed by app";
+    }
     if (invoice.status === "PENDING") return "Pending";
     const methods = state.payments
       .filter((payment) => payment.invoiceId === invoice.id)
@@ -364,6 +396,7 @@ function Invoices() {
         documentType,
         template: job.template,
         content: job.content,
+        ...(job.rich ? { rich: job.rich } : {}),
       });
       logDelivery(
         createDeliveryLog(
@@ -728,6 +761,17 @@ function Invoices() {
           value={activeRows.filter((row) => row.paymentStatus !== "PAID").length}
         />
       </div>
+      {notice && (
+        <div
+          role="status"
+          className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-md border border-success/30 bg-success-soft px-4 py-3 text-[13px] font-semibold text-success"
+        >
+          <span>{notice}</span>
+          <button type="button" className="underline" onClick={() => setNotice("")}>
+            Dismiss
+          </button>
+        </div>
+      )}
       {server.error && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/30 bg-warning-soft px-4 py-3 text-[13px] text-warning">
           <span>{server.error} Records made on this till are still shown.</span>
@@ -813,9 +857,7 @@ function Invoices() {
                 <TD className="num text-muted-foreground">{row.orderIds.join(", ")}</TD>
                 <TD>{row.customer}</TD>
                 <TD className="num text-right">{formatMoney(row.total)}</TD>
-                <TD className="num text-right font-semibold">
-                  {formatMoney(row.total - row.paid)}
-                </TD>
+                <TD className="num text-right font-semibold">{formatMoney(rowOutstanding(row))}</TD>
                 <TD>
                   <Status>{row.status}</Status>
                 </TD>
@@ -827,6 +869,7 @@ function Invoices() {
                     {["UNPAID", "PARTIAL"].includes(row.paymentStatus) && (
                       <Btn onClick={() => openSettle(row)}>Settle</Btn>
                     )}
+                    {collectAction(row)}
                   </TD>
                 )}
                 <TD>
@@ -876,7 +919,7 @@ function Invoices() {
                 </div>
                 <div className="text-right">
                   <span className="block text-muted-foreground">Outstanding</span>
-                  <span className="num font-bold">{formatMoney(row.total - row.paid)}</span>
+                  <span className="num font-bold">{formatMoney(rowOutstanding(row))}</span>
                 </div>
                 <div className="col-span-2 min-w-0">
                   <span className="block text-muted-foreground">Orders</span>
@@ -889,6 +932,7 @@ function Invoices() {
                   {showSettleColumn && ["UNPAID", "PARTIAL"].includes(row.paymentStatus) && (
                     <Btn onClick={() => openSettle(row)}>Settle</Btn>
                   )}
+                  {collectAction(row)}
                   <InvoiceDeliveryActions
                     row={row}
                     openPrintTemplate={openPrintTemplate}
@@ -1272,7 +1316,7 @@ function Invoices() {
           </DialogHeader>
           {printPreview && (
             <div className="space-y-4">
-              <DocumentTextPreview content={printPreview.content} />
+              <DocumentTextPreview content={printPreview.content} rich={printPreview.rich} />
               <div className="flex flex-wrap justify-end gap-2">
                 <Btn onClick={() => setPrintPreview(null)}>Close</Btn>
                 <Btn

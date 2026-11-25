@@ -139,6 +139,7 @@ export async function handleConfigurationApi(
       roleId: decodeURIComponent(rolePermissionsRoute[1]!),
       permissionCodes: body.permissions,
       reason: body.reason,
+      ...(body.basePermissions ? { basePermissions: body.basePermissions } : {}),
     });
     await refreshConfiguration(db, env, actor.tenantId);
     return json({ ok: true, role: result });
@@ -234,7 +235,7 @@ async function settingsMutationActor(request: Request, env: SerametEnv, bucket: 
 }
 
 async function refreshConfiguration(db: D1Database, env: SerametEnv, tenantId: string) {
-  await invalidateAuthoritativeConfiguration(db);
+  await invalidateAuthoritativeConfiguration(db, tenantId);
   await hydrateTenantConfiguration(db, env, tenantId, true);
 }
 
@@ -606,7 +607,9 @@ async function readRolePermissionsBody(request: Request) {
     throw new SerametHttpError(400, "Role permission request is invalid");
   }
   const record = value as Record<string, unknown>;
-  if (Object.keys(record).some((key) => !["permissions", "reason"].includes(key))) {
+  if (
+    Object.keys(record).some((key) => !["permissions", "reason", "basePermissions"].includes(key))
+  ) {
     throw new SerametHttpError(400, "Role permission request contains unknown fields");
   }
   if (
@@ -619,7 +622,20 @@ async function readRolePermissionsBody(request: Request) {
   if (typeof record["reason"] !== "string") {
     throw new SerametHttpError(400, "Role permission change reason is required");
   }
-  return { permissions: record["permissions"] as string[], reason: record["reason"] };
+  const base = record["basePermissions"];
+  if (
+    base !== undefined &&
+    (!Array.isArray(base) ||
+      base.length > allPermissionCodes.length ||
+      base.some((permission) => typeof permission !== "string"))
+  ) {
+    throw new SerametHttpError(400, "Base role permissions must be a bounded string array");
+  }
+  return {
+    permissions: record["permissions"] as string[],
+    reason: record["reason"],
+    ...(base ? { basePermissions: base as string[] } : {}),
+  };
 }
 
 async function readUserBranchAssignmentBody(request: Request) {

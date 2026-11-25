@@ -24,3 +24,17 @@ export function rasterMetrics(
   lineHeight: number;
 };
 export function validateRenderJob(job: unknown): void;
+export interface ReceiptLogo {
+  width: number;
+  height: number;
+  /** Packed 1-bit rows, most significant bit first, base64. */
+  data: string;
+}
+export const MAX_LOGO_WIDTH: number;
+export const MAX_LOGO_HEIGHT: number;
+export const LOGO_DOCUMENT_TYPES: string[];
+export function validateLogo(logo: unknown): number;
+export function richRasterMetrics(
+  rich: import("./rich-render.mjs").RichDocument,
+  profile: unknown,
+): { height: number; bytes: number; bands: number };

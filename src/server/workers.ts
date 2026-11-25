@@ -372,12 +372,16 @@ export async function findTenantsWithSweepWork(
     return new Set((rows.results ?? []).map((row) => row.tenant_id));
   };
   const probes: Record<SweepJobType, () => Promise<TenantSet>> = {
-    // Held marketplace orders waiting for their release time.
+    // Scheduled orders and durable availability timers must run even with no open orders.
     SCHEDULED_ORDER_RELEASE: () =>
       tenants(
         `SELECT DISTINCT tenant_id FROM authoritative_records
          WHERE ${activeTenantFilter} AND entity_type = 'state:orders' AND status = 'HELD'
-           AND payload_json LIKE '%scheduledReleaseAt%'`,
+           AND payload_json LIKE '%scheduledReleaseAt%'
+         UNION SELECT DISTINCT tenant_id FROM provider_mappings
+         WHERE ${activeTenantFilter} AND resource_type = 'ITEM' AND status IN ('MAPPED','AUTO_MATCHED')
+           AND metadata_json LIKE '%availabilityOverride%'
+           AND (sync_status = 'PENDING' OR metadata_json LIKE '%restoreAt%')`,
       ),
     INTEGRATION_OUTBOX_RECOVERY: () =>
       tenants(
@@ -760,6 +764,9 @@ async function executeWorkerJob(env: SerametEnv, job: WorkerJobRow) {
     }
     case "SCHEDULED_ORDER_RELEASE":
       await runtime.releaseDueScheduledOrders(job.tenant_id);
+      await runtime.recoverMarketplaceAvailability(job.tenant_id);
+      await runtime.recoverMarketplaceStores(job.tenant_id);
+      await runtime.recoverMarketplaceEdits(job.tenant_id);
       return;
     case "PAYMENT_PROMPT_STATUS_CHECK": {
       // Most minutes nothing is waiting; avoid loading the restaurant's state for nothing.
@@ -1487,7 +1494,9 @@ async function resetDemoTenant(env: SerametEnv, job: WorkerJobRow) {
 }
 
 async function commitSetupImport(env: SerametEnv, job: WorkerJobRow) {
-  const payload = parsePayload<{ importId?: string; commitKey?: string }>(job.payload_json);
+  const payload = parsePayload<{ importId?: string; commitKey?: string; autoPublish?: boolean }>(
+    job.payload_json,
+  );
   if (!payload.importId || !payload.commitKey) {
     throw new Error("Setup import worker is missing its import identity");
   }
@@ -1496,7 +1505,19 @@ async function commitSetupImport(env: SerametEnv, job: WorkerJobRow) {
     systemSetupActor(job.tenant_id, job.branch_id ?? undefined),
     env,
   );
-  return service.commitImport(payload.importId, payload.commitKey, { worker: true });
+  const result = await service.commitImport(payload.importId, payload.commitKey, {
+    worker: true,
+    autoPublish: payload.autoPublish === true,
+  });
+  // The person already reviewed the preview and asked for the items to go on the menu, so a
+  // saved import that passed its checks is added without a second confirmation.
+  if (payload.autoPublish === true && result.status === "COMMITTED" && !result.queued) {
+    const staged = await service.inspectImport(payload.importId);
+    if (staged.publishStatus === "READY" && staged.publishKey) {
+      await service.publishImport(staged.id, staged.publishKey);
+    }
+  }
+  return result;
 }
 
 async function prepareSetupImport(env: SerametEnv, job: WorkerJobRow) {

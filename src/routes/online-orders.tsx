@@ -8,6 +8,7 @@ import { formatMoney } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
+import { resolveOnlineOrderChannel } from "@/lib/online-order-channels";
 
 export const Route = createFileRoute("/online-orders")({
   head: () => ({
@@ -28,13 +29,7 @@ function OnlineOrders() {
   const [syncNotice, setSyncNotice] = useState("");
   const repository = getConfigurationRepository();
   const channels = repository.listOrderChannels(activeTenantId, true);
-  const onlineChannels = channels.filter(
-    (channel) => !["DINE_IN", "TAKEAWAY", "KIOSK"].includes(channel.channelType),
-  );
-  const resolveChannel = (value: string) =>
-    onlineChannels.find(
-      (channel) => channel.id === value || channel.code === value || channel.displayName === value,
-    );
+  const resolveChannel = (value: string) => resolveOnlineOrderChannel(channels, value);
   const rows = state.orders
     .filter((order) => matchesBranch(order.branchId ?? order.branch))
     .filter((order) => Boolean(resolveChannel(order.channel)))
@@ -109,11 +104,7 @@ function OnlineOrders() {
         />
       </div>
       <Panel className="mt-4">
-        <PanelHead
-          title="Channel intake"
-          sub="Every delivery partner and direct online order is now the same persistent Seramet order object"
-          right={<Wifi className="h-4 w-4 text-primary" />}
-        />
+        <PanelHead title="Channel intake" right={<Wifi className="h-4 w-4 text-primary" />} />
         <div className="hidden md:block">
           <DataTable
             cols={[
@@ -146,7 +137,7 @@ function OnlineOrders() {
             {rows.length === 0 && (
               <tr>
                 <TD className="text-muted-foreground" colSpan={8}>
-                  No online or delivery orders have entered this branch yet.
+                  No orders for channels with online pricing enabled.
                 </TD>
               </tr>
             )}
@@ -174,7 +165,7 @@ function OnlineOrders() {
           ))}
           {!rows.length && (
             <div className="p-8 text-center text-[12px] text-muted-foreground">
-              No online or delivery orders have entered this branch yet.
+              No orders for channels with online pricing enabled.
             </div>
           )}
         </div>

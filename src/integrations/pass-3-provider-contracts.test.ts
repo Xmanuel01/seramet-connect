@@ -572,3 +572,69 @@ describe("Pass 3 Bolt Food boundary", () => {
     });
   });
 });
+
+describe("scheduled orders from the apps", () => {
+  const uber = createUberEatsAdapter();
+  const uberConnection = connection("provider-delivery-uber-eats", {
+    externalStoreId: "uber-store-1",
+  });
+  const uberOrder = (fields: Record<string, unknown>) => ({
+    ...structuredClone(uberOrderFixture),
+    ...fields,
+  });
+
+  it("does not mark an ordinary Uber order as scheduled because of its ready estimate", async () => {
+    const normalized = await uber.normalizeIncomingOrder!(
+      uberOrder({ estimated_ready_for_pickup_at: "2026-08-29T12:20:00+03:00" }),
+      uberConnection,
+    );
+    expect(normalized.ok && normalized.value.scheduledFor).toBeUndefined();
+    expect(normalized.ok && normalized.value.scheduledReadyAt).toBeUndefined();
+  });
+
+  it("reads Uber's scheduled delivery time and pickup time", async () => {
+    const normalized = await uber.normalizeIncomingOrder!(
+      uberOrder({
+        scheduled_order_info: { deliver_at: "2026-08-29T19:00:00+03:00" },
+        estimated_ready_for_pickup_at: "2026-08-29T18:45:00+03:00",
+      }),
+      uberConnection,
+    );
+    expect(normalized).toMatchObject({
+      ok: true,
+      value: {
+        scheduledFor: "2026-08-29T19:00:00+03:00",
+        scheduledReadyAt: "2026-08-29T18:45:00+03:00",
+      },
+    });
+  });
+
+  it("treats an Uber ready time an hour or more after placement as scheduled", async () => {
+    const normalized = await uber.normalizeIncomingOrder!(
+      uberOrder({ estimated_ready_for_pickup_at: "2026-08-29T14:30:00+03:00" }),
+      uberConnection,
+    );
+    expect(normalized.ok && normalized.value.scheduledReadyAt).toBe("2026-08-29T14:30:00+03:00");
+  });
+
+  it("reads a Glovo pre-order's promised delivery time", async () => {
+    const glovo = createGlovoAdapter();
+    const glovoConnection = connection("provider-delivery-glovo", {
+      chainId: "chain-1",
+      externalStoreId: "glovo-vendor-1",
+      webhookHeaderName: "x-glovo-token",
+    });
+    const preorder = {
+      ...structuredClone(glovoOrderFixture),
+      isPreorder: true,
+      promised_for: "2026-08-29T19:00:00Z",
+    };
+    const normalized = await glovo.normalizeIncomingOrder!(preorder, glovoConnection);
+    expect(normalized.ok && normalized.value.scheduledFor).toBe("2026-08-29T19:00:00Z");
+    const asap = await glovo.normalizeIncomingOrder!(
+      { ...structuredClone(glovoOrderFixture), promised_for: "2026-08-29T12:40:00Z" },
+      glovoConnection,
+    );
+    expect(asap.ok && asap.value.scheduledFor).toBeUndefined();
+  });
+});

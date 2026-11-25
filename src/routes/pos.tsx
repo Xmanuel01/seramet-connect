@@ -1,5 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { deliverySettings, type DeliveryCharge } from "@/delivery/delivery-charge";
+import { DeliveryChargeFields } from "@/delivery/DeliveryChargeFields";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Clock,
@@ -14,8 +16,11 @@ import {
   X,
 } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
+import { OrderIsland, type OrderIslandNotice } from "@/components/app/OrderIsland";
 import { PosCustomerPicker } from "@/components/app/PosCustomerPicker";
 import { orderChannelDispatchError } from "@/orders/order-channel-service";
+import { UpcomingScheduledOrders } from "@/components/app/UpcomingScheduledOrders";
+import { branchLocalTimeToIso } from "@/orders/scheduled-orders";
 import {
   linkedOrderCustomer,
   resolvePosCustomer,
@@ -38,6 +43,7 @@ import { tracePos } from "@/lib/pos-lifecycle-trace";
 import { useCrmApi } from "@/crm/use-crm";
 import type { CustomerProfile } from "@/crm/types";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
+import { posMenuPrice } from "@/lib/pos-menu-pricing";
 import {
   INITIAL_POS_MENU_ITEMS,
   POS_MENU_PAGE_SIZE,
@@ -212,6 +218,22 @@ function POS() {
   );
   const hydratedOrderIdRef = useRef<string | null>(null);
   const orderActionRef = useRef(false);
+  // True once the server has accepted the kitchen order, so a later print failure is
+  // reported as "saved, not printed" rather than "not placed" (which invites a duplicate).
+  const kitchenOrderAcceptedRef = useRef(false);
+  const [orderIsland, setOrderIsland] = useState<OrderIslandNotice | null>(null);
+  const dismissOrderIsland = useCallback(() => setOrderIsland(null), []);
+  const showOrderIsland = (
+    kind: OrderIslandNotice["kind"],
+    detail?: string,
+    linkToPrinters = kind !== "placed",
+  ) =>
+    setOrderIsland((current) => ({
+      id: (current?.id ?? 0) + 1,
+      kind,
+      linkToPrinters,
+      ...(detail ? { detail } : {}),
+    }));
   // Bridge callbacks may complete out of order. Persist their acknowledgements
   // sequentially; failure leaves an inspectable CLAIMED obligation on the server.
   const kotAcknowledgeRef = useRef<Promise<void>>(Promise.resolve());
@@ -220,6 +242,14 @@ function POS() {
   const [lines, setLines] = useState<Record<string, number>>(recoveredDraft?.lines ?? {});
   const [recipientName, setRecipientName] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [deliveryPhone, setDeliveryPhone] = useState("");
+  const [doorNumber, setDoorNumber] = useState("");
+  const [deliveryCharge, setDeliveryCharge] = useState<DeliveryCharge>();
+  // A delivery-app order typed in by hand: the app's number and any part due on delivery.
+  const [appOrderNumber, setAppOrderNumber] = useState("");
+  const [dueOnDelivery, setDueOnDelivery] = useState("");
+  // Scheduled app order: when the app's rider collects it (empty: cook now).
+  const [appReadyBy, setAppReadyBy] = useState("");
   const deliveryHydratedOrderRef = useRef<string | null>(null);
   const [printNotice, setPrintNotice] = useState(IDLE_PRINT_NOTICE);
   const [printNoticeType, setPrintNoticeType] = useState<"idle" | "success" | "warning">("idle");
@@ -338,7 +368,6 @@ function POS() {
     ) ?? (offlineStorageAvailable ? null : "Offline storage unavailable");
   const isOnlineSource =
     selectedChannel?.channelType === "MARKETPLACE" || selectedChannel?.channelType === "WEB";
-  const onlinePriceMultiplier = Number(selectedChannel?.metadata["priceMultiplier"] ?? 1);
   const terminalId = `${branchRecord.code}-POS-01`;
   const branchServiceAreas = useMemo(
     () =>
@@ -394,6 +423,9 @@ function POS() {
     deliveryHydratedOrderRef.current = key;
     setRecipientName(activeOrder.delivery?.recipientName ?? "");
     setDeliveryAddress(activeOrder.delivery?.address ?? "");
+    setDeliveryPhone(activeOrder.delivery?.phone ?? "");
+    setDoorNumber(activeOrder.delivery?.doorNumber ?? "");
+    setDeliveryCharge(activeOrder.delivery?.charge);
   }, [activeOrder, activeOrderId, activeTenantId, branchId]);
   const selectedOrderUnavailable = Boolean(activeOrderId && !activeOrder);
   const mutateTransaction: typeof mutateBackendTransaction = async (
@@ -449,20 +481,14 @@ function POS() {
       operationalMenu.items
         .filter((product) => product.branchAvailability?.[branch] !== false)
         .map((product) => {
-          const branchPrice = product.branchPrices?.[branch] ?? product.price;
           const availability = TransactionEngine.getProductAvailability(
             transactionState,
             branchId,
             product.id,
           );
-          const price = isOnlineSource
-            ? Math.round(branchPrice * onlinePriceMultiplier)
-            : branchPrice;
           return {
             ...product,
-            price,
-            priceMinor: parseMajorAmount(price, tenant.defaultCurrency),
-            currency: tenant.defaultCurrency,
+            ...posMenuPrice(product, selectedChannel, branch, tenant.defaultCurrency),
             out: product.out === true || !availability.available,
             availabilityPortions: availability.portions,
           };
@@ -470,8 +496,7 @@ function POS() {
     [
       branch,
       branchId,
-      isOnlineSource,
-      onlinePriceMultiplier,
+      selectedChannel,
       operationalMenu.items,
       tenant.defaultCurrency,
       transactionState,
@@ -538,6 +563,10 @@ function POS() {
 
   const chooseChannel = (id: string) => {
     if (channelLocked) return;
+    setDeliveryCharge(undefined);
+    setAppOrderNumber("");
+    setDueOnDelivery("");
+    setAppReadyBy("");
     setPreferredChannelId(id);
     setOrderSource(id);
     window.sessionStorage.setItem(channelPreferenceKey, id);
@@ -690,7 +719,10 @@ function POS() {
   );
   const hasUnsentItems = items.some((line) => line.qty > (sentQuantities[line.p.id] ?? 0));
   // An order is billed once it has been to the kitchen and nothing new is waiting to go.
-  const billReady = canPrintBill && !hasUnsentItems;
+  const appBooked = activeOrder?.paymentStatus === "PROVIDER_RECEIVABLE";
+  const billReady = canPrintBill && !hasUnsentItems && !appBooked;
+  const takesAppOrderNumber =
+    selectedChannel?.channelType === "MARKETPLACE" && !activeOrder?.externalSource;
   const workflowState = !activeOrder
     ? "New"
     : activeOrder.status === "HELD"
@@ -702,6 +734,32 @@ function POS() {
           : "New";
   const subtotalMinor = items.reduce((sum, line) => sum + (line.p.priceMinor ?? 0) * line.qty, 0);
   const pricingRules = new Map(operationalMenu.pricingRules.map((rule) => [rule.id, rule]));
+  // A saved menu shows at once, but orders wait for the current one so no old price is charged.
+  const checkingPrices = !operationalMenu.fresh;
+  // Items added from a saved menu that the current menu no longer has: kept visible and
+  // flagged, never silently dropped, and nothing is sent until the cashier removes them.
+  const knownNames = useRef(new Map<string, string>());
+  for (const product of operationalMenu.items) knownNames.current.set(product.id, product.name);
+  const missingLines = operationalMenu.fresh
+    ? Object.entries(lines)
+        .filter(
+          ([id, qty]) =>
+            qty > (sentQuantities[id] ?? 0) && !branchMenu.some((product) => product.id === id),
+        )
+        .map(([id, qty]) => ({
+          id,
+          qty: qty - (sentQuantities[id] ?? 0),
+          name: knownNames.current.get(id) ?? "An item",
+        }))
+    : [];
+  const orderBlocked = checkingPrices || missingLines.length > 0;
+  // Checked again when an action runs, since a dialog may have been opened before.
+  const orderBlockedReason = () =>
+    checkingPrices
+      ? "Checking the latest prices. Try again in a moment."
+      : missingLines.length
+        ? `${missingLines.map((line) => line.name).join(", ")} is no longer on the menu. Remove it first.`
+        : null;
   const taxTotals = items.reduce(
     (totals, line) => {
       const rule = line.p.taxRuleId ? pricingRules.get(line.p.taxRuleId) : undefined;
@@ -729,12 +787,25 @@ function POS() {
       },
       { reported: 0, added: 0 },
     );
+  const configuredDelivery = deliverySettings(selectedChannel);
+  const showDelivery =
+    configuredDelivery?.fulfilment === "RESTAURANT" ||
+    configuredDelivery?.fulfilment === "PROVIDER" ||
+    selectedChannel?.channelType === "OWN_DELIVERY" ||
+    selectedChannel?.requiresAddress;
+  const deliveryAmountMinor = deliveryCharge?.amountMinor ?? 0;
   const invoicePricing = posInvoicePricing({
     currency: tenant.defaultCurrency,
     itemsMinor: subtotalMinor,
     taxMinor: taxTotals.reported,
     serviceMinor: serviceTotals.reported,
     exclusiveChargesMinor: taxTotals.added + serviceTotals.added,
+    ...(deliveryCharge
+      ? {
+          deliveryChargeMinor: deliveryAmountMinor,
+          deliveryPayableMinor: deliveryCharge.beneficiary === "RIDER" ? deliveryAmountMinor : 0,
+        }
+      : {}),
   });
   const subtotal = majorFromMinor(
     invoicePricing.financialComponents.netSalesMinor,
@@ -742,7 +813,7 @@ function POS() {
   );
   const tax = majorFromMinor(taxTotals.reported + serviceTotals.reported, tenant.defaultCurrency);
   const total = majorFromMinor(
-    subtotalMinor + taxTotals.added + serviceTotals.added,
+    subtotalMinor + taxTotals.added + serviceTotals.added + deliveryAmountMinor,
     tenant.defaultCurrency,
   );
   const predictedNextOrderId = () => nextTransactionRecordId("ORD", transactionState.orders);
@@ -775,6 +846,9 @@ function POS() {
     cashier: currentUser.name,
     waiter: currentUser.name,
     createdAt: activeOrder?.createdAt ?? new Date().toISOString(),
+    taxRatesBps: operationalMenu.pricingRules
+      .filter((rule) => rule.rule_type === "TAX")
+      .map((rule) => rule.rate_bps),
     customer:
       linkedCustomer?.displayName ??
       (isOnlineSource
@@ -796,6 +870,10 @@ function POS() {
       ...(itemNotes[line.p.id]?.trim() ? { itemNote: itemNotes[line.p.id]!.trim() } : {}),
     })),
     subtotal: invoicePricing.subtotal,
+    deliveryCharge: majorFromMinor(deliveryAmountMinor, tenant.defaultCurrency),
+    deliveryDetails: showDelivery
+      ? [{ recipientName, phone: deliveryPhone, address: deliveryAddress, doorNumber }]
+      : [],
     tax: invoicePricing.tax,
     total,
   });
@@ -866,12 +944,15 @@ function POS() {
                 ? `Table ${tableNo}`
                 : "Unassigned table",
       ),
-      ...(selectedChannel?.requiresCustomer || selectedChannel?.requiresAddress
+      ...(showDelivery || selectedChannel?.requiresCustomer
         ? {
             delivery: {
               ...(activeOrder?.delivery ?? { status: "UNASSIGNED" as const }),
               recipientName: recipientName.trim(),
               address: deliveryAddress.trim(),
+              phone: deliveryPhone.trim(),
+              doorNumber: doorNumber.trim(),
+              charge: deliveryCharge,
             },
             ...(!linkedCustomer && recipientName.trim() ? { customer: recipientName.trim() } : {}),
           }
@@ -915,6 +996,12 @@ function POS() {
     setSelectedTableNo(null);
     setRecipientName("");
     setDeliveryAddress("");
+    setDeliveryPhone("");
+    setDoorNumber("");
+    setDeliveryCharge(undefined);
+    setAppOrderNumber("");
+    setDueOnDelivery("");
+    setAppReadyBy("");
     setPrintNotice(message);
     setPrintNoticeType(noticeType);
   };
@@ -937,6 +1024,12 @@ function POS() {
   const holdOrder = () =>
     void runOrderAction(async () => {
       if (!items.length) return;
+      const blocked = orderBlockedReason();
+      if (blocked) {
+        setPrintNotice(blocked);
+        setPrintNoticeType("warning");
+        return;
+      }
       try {
         await createOrUpdateActiveOrder("HELD");
         clearCurrentOrder("Order held in active orders.");
@@ -947,7 +1040,10 @@ function POS() {
     });
 
   const queueKitchenTicketsForTable = async (tableNo = orderTable) => {
+    kitchenOrderAcceptedRef.current = false;
     if (!items.length) return null;
+    const blocked = orderBlockedReason();
+    if (blocked) throw new Error(blocked);
     if (selectedChannel?.requiresTable && !tableNo) {
       throw new Error("Choose a table before sending this order to the kitchen.");
     }
@@ -959,6 +1055,26 @@ function POS() {
     const draft = buildTransactionDraft(tableNo);
     const channelError = orderChannelDispatchError(selectedChannel, draft);
     if (channelError) throw new Error(channelError);
+    let appOrder:
+      { externalOrderId: string; dueOnDeliveryMinor: number; readyBy?: string } | undefined;
+    if (takesAppOrderNumber) {
+      const due = dueOnDelivery.trim() ? Number(dueOnDelivery) : 0;
+      if (!appOrderNumber.trim())
+        throw new Error(`Enter the ${selectedChannel?.displayName} order number first.`);
+      if (!Number.isFinite(due) || due < 0 || due > total)
+        throw new Error("The amount due on delivery must be between 0 and the order total.");
+      // Typed in the branch's time, whatever time zone this device is set to.
+      const readyBy = appReadyBy
+        ? new Date(branchLocalTimeToIso(appReadyBy, clockTimeZone))
+        : undefined;
+      if (readyBy && !(readyBy.getTime() > Date.now()))
+        throw new Error("The ready-by time must be later than now.");
+      appOrder = {
+        externalOrderId: appOrderNumber.trim(),
+        dueOnDeliveryMinor: parseMajorAmount(due, tenant.defaultCurrency),
+        ...(readyBy ? { readyBy: readyBy.toISOString() } : {}),
+      };
+    }
     const previewLines = items.flatMap((line) => {
       const unsentQuantity = line.qty - (sentQuantities[line.p.id] ?? 0);
       if (unsentQuantity <= 0) return [];
@@ -1011,7 +1127,9 @@ function POS() {
     const resultState = await mutateTransaction("upsertAndSendKitchen", {
       ...(activeOrder?.id ? { orderId: activeOrder.id } : {}),
       draft,
+      ...(appOrder ? { appOrder } : {}),
     });
+    kitchenOrderAcceptedRef.current = true;
     if (resultState && "offline" in resultState && resultState.offline) {
       throw new Error(
         "Kitchen command is queued for offline reconciliation. No authoritative " +
@@ -1031,7 +1149,17 @@ function POS() {
     if (ticketLines.length === 0) {
       setActiveOrderId(authoritativeOrder.id);
       setSelectedTableNo(authoritativeOrder.table ?? tableNo ?? null);
-      setPrintNotice("No new kitchen items require a KOT amendment.");
+      const releaseAt = authoritativeOrder.externalSource?.scheduledReleaseAt;
+      setPrintNotice(
+        authoritativeOrder.status === "HELD" && releaseAt
+          ? `Scheduled. The kitchen gets it at ${new Date(releaseAt).toLocaleString(undefined, {
+              timeZone: clockTimeZone,
+              weekday: "short",
+              hour: "numeric",
+              minute: "2-digit",
+            })}.`
+          : "No new kitchen items require a KOT amendment.",
+      );
       setPrintNoticeType("idle");
       return {
         order: authoritativeOrder,
@@ -1218,41 +1346,43 @@ function POS() {
       if (!items.length) return;
       if (selectedChannel?.requiresTable && !orderTable) {
         setTablePickerOpen(true);
-        setPrintNotice("Choose a table before sending this order to the kitchen.");
-        setPrintNoticeType("warning");
+        showOrderIsland("failed", "Choose a table first", false);
         return;
       }
       try {
         const result = await queueKitchenTicketsForTable();
         if (!result) return;
         if ("bypassed" in result && result.bypassed) {
-          clearCurrentOrder(
-            `${result.order.id} sent to the kitchen and saved in Orders. Printer bypass is on, so no ticket was printed.`,
-            "warning",
-          );
+          clearCurrentOrder(IDLE_PRINT_NOTICE);
+          showOrderIsland("saved", `${result.order.id} · printer bypass is on`);
           return;
         }
         const dispatched = kitchenDispatchHasDelivery(result);
+        clearCurrentOrder(IDLE_PRINT_NOTICE);
         if (dispatched) {
-          const notice = result.printResult?.jobs.length
-            ? `${result.order.id} sent to the kitchen and saved in Orders.`
-            : `${result.order.id} is already in kitchen; no new KOT is required.`;
-          clearCurrentOrder(notice, "success");
+          showOrderIsland("placed", result.order.id);
         } else {
           // The order is safe in Orders either way; only the ticket needs checking.
-          clearCurrentOrder(
-            `${result.order.id} is in Orders, but its kitchen ticket isn't confirmed. Check it in Printers.`,
-            "warning",
-          );
+          showOrderIsland("saved", `${result.order.id} · check the ticket in Printers`);
         }
       } catch (error) {
-        setPrintNotice(cashierErrorMessage(error, "The kitchen order could not be sent."));
-        setPrintNoticeType("warning");
+        if (kitchenOrderAcceptedRef.current) {
+          showOrderIsland("saved", "In Orders · check the ticket in Printers");
+        } else {
+          const reason = kitchenFailureReason(error);
+          showOrderIsland("failed", reason.text, reason.printer);
+        }
       }
     });
 
   const moveOrderToInvoice = async (printBill: boolean) => {
     if (orderActionRef.current) return;
+    const blocked = orderBlockedReason();
+    if (blocked) {
+      setPrintNotice(blocked);
+      setPrintNoticeType("warning");
+      return;
+    }
     orderActionRef.current = true;
     setOrderActionBusy(true);
     if (!activeOrder || !canPrintBill) {
@@ -1592,17 +1722,26 @@ function POS() {
                 }}
               />
             </div>
+            <UpcomingScheduledOrders
+              orders={transactionState.orders}
+              branchId={branchId}
+              timeZone={clockTimeZone}
+            />
             {isOnlineSource && (
               <div className="mb-3 rounded-lg border border-info/30 bg-info-soft px-3 py-2 text-[12px] font-semibold text-info">
-                {selectedChannel?.displayName} selected: menu cards now use online prices and
-                settlement defaults to partner credit where required.
+                {selectedChannel?.displayName}:{" "}
+                {selectedChannel?.metadata["useOnlinePrice"] === true
+                  ? "Online pricing where configured"
+                  : "Standard pricing"}
+                .
               </div>
             )}
-            {(selectedChannel?.requiresCustomer || selectedChannel?.requiresAddress) && (
+            {(showDelivery || selectedChannel?.requiresCustomer) && (
               <div className="mb-3 grid gap-2 sm:grid-cols-2">
-                {selectedChannel.requiresCustomer && !linkedCustomer && (
+                {(showDelivery || selectedChannel?.requiresCustomer) && (
                   <label className="grid gap-1 text-xs font-semibold">
                     Customer name
+                    {showDelivery && !selectedChannel?.requiresCustomer ? " (optional)" : ""}
                     <input
                       value={recipientName}
                       onChange={(event) => setRecipientName(event.target.value)}
@@ -1615,9 +1754,9 @@ function POS() {
                     />
                   </label>
                 )}
-                {selectedChannel.requiresAddress && (
+                {showDelivery && (
                   <label className="grid gap-1 text-xs font-semibold">
-                    Delivery address
+                    Delivery address{selectedChannel?.requiresAddress ? "" : " (optional)"}
                     <input
                       value={deliveryAddress}
                       onChange={(event) => setDeliveryAddress(event.target.value)}
@@ -1628,6 +1767,115 @@ function POS() {
                     />
                   </label>
                 )}
+                {showDelivery && (
+                  <>
+                    <label className="grid gap-1 text-xs font-semibold">
+                      Phone number (optional)
+                      <input
+                        type="tel"
+                        maxLength={64}
+                        value={deliveryPhone}
+                        disabled={!!activeOrder?.externalSource}
+                        onChange={(event) => setDeliveryPhone(event.target.value)}
+                        className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
+                      />
+                    </label>
+                    <label className="grid gap-1 text-xs font-semibold">
+                      Door / unit number (optional)
+                      <input
+                        maxLength={40}
+                        value={doorNumber}
+                        disabled={!!activeOrder?.externalSource}
+                        onChange={(event) => setDoorNumber(event.target.value)}
+                        className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
+                      />
+                    </label>
+                  </>
+                )}
+              </div>
+            )}
+            {takesAppOrderNumber && (
+              <div className="mb-3 grid gap-2 sm:grid-cols-2">
+                <label className="grid gap-1 text-xs font-semibold">
+                  {selectedChannel?.displayName} order number
+                  <input
+                    value={appOrderNumber}
+                    maxLength={80}
+                    onChange={(event) => setAppOrderNumber(event.target.value)}
+                    placeholder="As shown on the app"
+                    className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
+                  />
+                </label>
+                <label className="grid gap-1 text-xs font-semibold">
+                  Due on delivery ({tenant.defaultCurrency})
+                  <input
+                    inputMode="decimal"
+                    value={dueOnDelivery}
+                    onChange={(event) => setDueOnDelivery(event.target.value)}
+                    placeholder="0 if paid in the app"
+                    className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
+                  />
+                </label>
+                <label className="grid gap-1 text-xs font-semibold sm:col-span-2">
+                  Ready by (scheduled orders only)
+                  <input
+                    type="datetime-local"
+                    value={appReadyBy}
+                    onChange={(event) => setAppReadyBy(event.target.value)}
+                    className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
+                  />
+                </label>
+                <p className="text-[11px] text-muted-foreground sm:col-span-2">
+                  The app pays the rest with its payout. Anything due on delivery is collected on
+                  Invoices. With a ready-by time, the kitchen gets the order when its prep should
+                  start.
+                </p>
+              </div>
+            )}
+            {appBooked && activeOrder?.externalSource && (
+              <div className="mb-3 rounded-lg border border-info/30 bg-info-soft px-3 py-2 text-[12px] font-semibold text-info">
+                {selectedChannel?.displayName} order {activeOrder.externalSource.externalOrderId}:
+                paid through the app. Collect anything due on delivery on Invoices.
+              </div>
+            )}
+            {configuredDelivery && (
+              <DeliveryChargeFields
+                settings={configuredDelivery}
+                branchId={branchId}
+                currency={tenant.defaultCurrency}
+                value={deliveryCharge}
+                onChange={setDeliveryCharge}
+                disabled={channelLocked || !!activeOrder?.externalSource}
+                canOverride={hasPermission(permissions.paymentsReconcile)}
+              />
+            )}
+            {missingLines.length > 0 && (
+              <div
+                role="alert"
+                className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-[12px] font-semibold text-warning"
+              >
+                <span>
+                  No longer on the menu:{" "}
+                  {missingLines.map((line) => `${line.name} ×${line.qty}`).join(", ")}
+                </span>
+                <button
+                  type="button"
+                  className="rounded-md border border-warning/40 bg-card px-2 py-1"
+                  onClick={() =>
+                    setLines((current) =>
+                      Object.fromEntries(
+                        Object.entries(current).flatMap(([id, qty]) => {
+                          const missing = missingLines.find((line) => line.id === id);
+                          if (!missing) return [[id, qty]];
+                          const remaining = qty - missing.qty;
+                          return remaining > 0 ? [[id, remaining]] : [];
+                        }),
+                      ),
+                    )
+                  }
+                >
+                  Remove
+                </button>
               </div>
             )}
             {operationalMenu.status === "error" && (
@@ -1888,6 +2136,7 @@ function POS() {
                   onClick={holdOrder}
                   disabled={
                     orderActionBusy ||
+                    orderBlocked ||
                     selectedOrderUnavailable ||
                     !items.length ||
                     activeOrderHasSentLines
@@ -1901,15 +2150,23 @@ function POS() {
                   variant={billReady ? undefined : "primary"}
                   className="h-12 text-[15px]"
                   onClick={queueKitchenTickets}
-                  disabled={orderActionBusy || selectedOrderUnavailable || !items.length}
+                  disabled={
+                    orderActionBusy || orderBlocked || selectedOrderUnavailable || !items.length
+                  }
                 >
-                  {orderActionBusy ? "Working..." : "Place Order"}
+                  {orderActionBusy
+                    ? "Working..."
+                    : checkingPrices
+                      ? "Checking prices…"
+                      : "Place Order"}
                 </Btn>
                 <Btn
                   variant={billReady ? "primary" : undefined}
                   className="h-12 text-[15px]"
                   onClick={() => setBillConfirmOpen(true)}
-                  disabled={orderActionBusy || selectedOrderUnavailable || !billReady}
+                  disabled={
+                    orderActionBusy || orderBlocked || selectedOrderUnavailable || !billReady
+                  }
                   title={billReady ? undefined : "Open a sent order from Orders to bill it."}
                 >
                   Bill {formatMoney(total)}
@@ -1918,6 +2175,7 @@ function POS() {
             </div>
           </aside>
         </div>
+        <OrderIsland notice={orderIsland} onDismiss={dismissOrderIsland} />
         {printToastOpen && printNotice !== IDLE_PRINT_NOTICE && (
           <div
             role="status"
@@ -2169,6 +2427,25 @@ function PosClock({ locale, timeZone }: { locale: string; timeZone: string }) {
 
 // Placeholder shown before any action; the status box stays hidden until there is news.
 const IDLE_PRINT_NOTICE = "Print routing is running in the background.";
+
+const NO_PRINT_ROUTE = "Kitchen dispatch requires a configured printer/KDS route";
+
+/**
+ * Printer and routing problems become a few words that link to Printers & Devices.
+ * Anything else (a missing delivery address, a required customer, a server rejection)
+ * is shown as the cashier's own message, so they know what to fix.
+ */
+function kitchenFailureReason(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  if (message.startsWith(NO_PRINT_ROUTE))
+    return { text: "No printer set up for this till", printer: true };
+  if (message.startsWith("Kitchen routing is unavailable"))
+    return { text: "No kitchen route set up", printer: true };
+  return {
+    text: cashierErrorMessage(error, "The kitchen order could not be sent."),
+    printer: false,
+  };
+}
 
 function cashierErrorMessage(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message : fallback;

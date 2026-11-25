@@ -126,7 +126,9 @@ export function createUberEatsAdapter(
     verifyWebhook: verifyUberWebhook,
     parseWebhook: async (request) => {
       const parsed = parseJson<UberWebhook>(request);
-      if (!parsed.event_id || !parsed.event_type || !parsed.meta?.resource_id)
+      // Store events can name only the store (meta.user_id); order events also name the order.
+      const resourceId = parsed.meta?.resource_id ?? parsed.meta?.user_id;
+      if (!parsed.event_id || !parsed.event_type || !resourceId)
         return failure(
           "VALIDATION",
           "Uber webhook is missing its immutable event or resource identifier",
@@ -137,8 +139,8 @@ export function createUberEatsAdapter(
         value: {
           providerEventId: parsed.event_id,
           eventType,
-          externalResourceId: parsed.meta.resource_id,
-          ...(parsed.meta.user_id ? { externalStoreId: parsed.meta.user_id } : {}),
+          externalResourceId: resourceId,
+          ...(parsed.meta?.user_id ? { externalStoreId: parsed.meta.user_id } : {}),
           ...(parsed.event_time
             ? {
                 occurredAt: new Date(
@@ -424,6 +426,9 @@ async function requestUber<T>(
   return response.data;
 }
 
+/** A ready time this far after placement means Uber is holding the order for later. */
+const scheduledReadyLeadMs = 60 * 60_000;
+
 function normalizeUberOrder(
   payload: unknown,
   connection: IntegrationConnection,
@@ -450,11 +455,14 @@ function normalizeUberOrder(
   );
   const discount =
     promotionalSubtotal === undefined ? 0 : Math.max(0, subtotal - promotionalSubtotal);
-  const taxes = moneyAt(order, factor, "payment", "charges", "tax", "amount") ?? 0;
+  const deliveryFee = moneyAt(order, factor, "payment", "charges", "delivery_fee", "amount") ?? 0;
+  const taxes =
+    (moneyAt(order, factor, "payment", "charges", "tax", "amount") ?? 0) +
+    (moneyAt(order, factor, "payment", "charges", "delivery_fee_tax", "amount") ?? 0);
   const serviceFee = moneyAt(order, factor, "payment", "charges", "total_fee", "amount") ?? 0;
   const total =
     moneyAt(order, factor, "payment", "charges", "total", "amount") ??
-    subtotal - discount + taxes + serviceFee;
+    subtotal - discount + taxes + serviceFee + deliveryFee;
   const cashAmountDue =
     moneyAt(order, factor, "payment", "charges", "cash_amount_due", "amount") ?? 0;
   const marketplaceFeeDueToProvider =
@@ -474,15 +482,23 @@ function normalizeUberOrder(
     .filter(Boolean)
     .join(" ");
   const address =
+    stringAt(order, "deliveries", "0", "location", "street_address") ??
     stringAt(order, "deliveries", "0", "location", "formatted_address") ??
     stringAt(order, "delivery", "location", "formatted_address");
   const instructions = stringAt(order, "special_instructions");
   const externalCustomerId = stringAt(order, "eater", "id");
   const customerPhone = stringAt(order, "eater", "phone");
   const providerPaymentReference = stringAt(order, "payment", "payment_method");
-  const scheduledFor =
-    stringAt(order, "scheduled_order_info", "deliver_at") ??
-    stringAt(order, "estimated_ready_for_pickup_at");
+  // Uber's ready-for-pickup estimate is on every order, so it alone does not make one scheduled:
+  // only Uber's scheduled delivery time does, or a ready time an hour or more after placement.
+  const deliverAt = stringAt(order, "scheduled_order_info", "deliver_at");
+  const uberReadyAt = stringAt(order, "estimated_ready_for_pickup_at");
+  const placedAt = Date.parse(stringAt(order, "placed_at") ?? "");
+  const scheduled =
+    Boolean(deliverAt) ||
+    (Boolean(uberReadyAt) &&
+      Number.isFinite(placedAt) &&
+      Date.parse(uberReadyAt!) - placedAt >= scheduledReadyLeadMs);
   const currency = stringAt(order, "payment", "charges", "total", "currency_code") ?? "KES";
 
   return Promise.resolve({
@@ -493,9 +509,13 @@ function normalizeUberOrder(
       externalStoreId: storeId,
       orderType: pickup ? "PICKUP" : dineIn ? "DINE_IN" : "DELIVERY",
       createdAt: stringAt(order, "placed_at") ?? new Date().toISOString(),
-      ...(scheduledFor ? { scheduledFor } : {}),
+      ...(scheduled && deliverAt ? { scheduledFor: deliverAt } : {}),
+      ...(scheduled && uberReadyAt ? { scheduledReadyAt: uberReadyAt } : {}),
       currency,
       customer: {
+        ...(stringAt(order, "eater", "phone_code")
+          ? { phoneCode: stringAt(order, "eater", "phone_code") }
+          : {}),
         ...(externalCustomerId ? { externalCustomerId } : {}),
         ...(customerName ? { name: customerName } : {}),
         ...(customerPhone ? { phone: customerPhone } : {}),
@@ -504,6 +524,9 @@ function normalizeUberOrder(
         type: pickup ? "PICKUP" : restaurantDelivery ? "RESTAURANT" : dineIn ? "NONE" : "PROVIDER",
         providerManaged: !pickup && !restaurantDelivery && !dineIn,
         ...(address ? { address } : {}),
+        ...(stringAt(order, "deliveries", "0", "location", "unit_number")
+          ? { doorNumber: stringAt(order, "deliveries", "0", "location", "unit_number") }
+          : {}),
       },
       items,
       pricing: {
@@ -511,6 +534,7 @@ function normalizeUberOrder(
         discounts: discount,
         taxes,
         ...(serviceFee ? { serviceFee } : {}),
+        ...(deliveryFee ? { deliveryFee } : {}),
         total,
       },
       payment: {
@@ -682,13 +706,15 @@ async function verifyUberWebhook(request: ProviderWebhookRequest) {
   return constantTimeEqual(toHex(new Uint8Array(digest)), signature.toLowerCase());
 }
 
+// Deny types are the Order Fulfillment API's `deny_reason.type` enum (ITEM_ISSUE, STORE_CLOSED,
+// ORDER_VALIDATION, PRICING, CAPACITY, TECHNICAL_FAILURE, OTHER, ...); Uber refuses any other value.
 function uberRejectionReason(
   reason: import("@/integrations/marketplace/types").MarketplaceRejectionReason,
 ) {
   const mapping: Record<typeof reason, { type: string; info: string; client_error_code: string }> =
     {
       ITEM_UNAVAILABLE: {
-        type: "ITEM_AVAILABILITY",
+        type: "ITEM_ISSUE",
         info: "One or more items are unavailable",
         client_error_code: "SERAMET_ITEM_UNAVAILABLE",
       },
@@ -698,27 +724,27 @@ function uberRejectionReason(
         client_error_code: "SERAMET_STORE_CLOSED",
       },
       ITEM_MAPPING_ERROR: {
-        type: "OTHER",
+        type: "ORDER_VALIDATION",
         info: "Order item mapping requires attention",
         client_error_code: "SERAMET_ITEM_MAPPING_ERROR",
       },
       PRICE_MISMATCH: {
-        type: "OTHER",
+        type: "PRICING",
         info: "Order pricing could not be validated",
         client_error_code: "SERAMET_PRICE_MISMATCH",
       },
       INVALID_ORDER: {
-        type: "OTHER",
+        type: "ORDER_VALIDATION",
         info: "Order validation failed",
         client_error_code: "SERAMET_INVALID_ORDER",
       },
       CAPACITY: {
-        type: "KITCHEN_FULL",
+        type: "CAPACITY",
         info: "The restaurant cannot prepare the order in time",
         client_error_code: "SERAMET_CAPACITY",
       },
       TECHNICAL_FAILURE: {
-        type: "OTHER",
+        type: "TECHNICAL_FAILURE",
         info: "A technical failure prevented acceptance",
         client_error_code: "SERAMET_TECHNICAL_FAILURE",
       },

@@ -7,6 +7,8 @@ import { useAppContext } from "@/lib/app-context";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { UpcomingScheduledOrders } from "@/components/app/UpcomingScheduledOrders";
+import { resolvePosTimeZone } from "@/lib/pos-workflow";
 import type { OrderForPrint, PrintJob, ProductionStation } from "@/lib/seramet-print-service";
 import type { TransactionOrder } from "@/lib/transaction-engine";
 import {
@@ -73,6 +75,13 @@ function KDS() {
     sendKitchenTickets,
     retryJob,
   } = useSerametPrintQueue(branchId);
+  const tenantRecord = platformState.tenants.find((item) => item.id === activeTenantId);
+  const kitchenTimeZone = resolvePosTimeZone(
+    platformState.branches.find((item) => item.id === branchId)?.timezone,
+    tenantRecord?.timezone,
+    tenantRecord?.countryCode,
+    tenantRecord?.defaultCurrency,
+  );
   const [selectedStation, setSelectedStation] = useState("ALL");
   const [notice, setNotice] = useState("");
   const [recallTicketId, setRecallTicketId] = useState("");
@@ -217,6 +226,14 @@ function KDS() {
               : configurationError)}
         </div>
       )}
+
+      <div className="mx-3 mt-3 empty:hidden">
+        <UpcomingScheduledOrders
+          orders={state.orders}
+          branchId={branchId}
+          timeZone={kitchenTimeZone}
+        />
+      </div>
 
       {hasKdsWorkflow ? (
         <div className="grid gap-3 p-3 md:grid-cols-3">

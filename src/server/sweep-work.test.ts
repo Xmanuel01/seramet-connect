@@ -252,6 +252,38 @@ describe("frequent sweeps write a job only when there is work", () => {
     expect((await sweepTenants(db)).GUEST_NOTIFICATION_DISPATCH).toEqual([busy]);
   });
 
+  it("schedules availability restoration without a held order and recovers pending publication", async () => {
+    await db
+      .prepare(
+        `INSERT INTO provider_mappings (tenant_id,id,branch_id,connection_id,provider_id,resource_type,internal_id,external_id,status,sync_status,metadata_json,created_at,updated_at)
+      VALUES (?,'timer',?,'connection','provider','ITEM','item','external','MAPPED','SYNCED',?,?,?)`,
+      )
+      .bind(
+        busy,
+        branch,
+        JSON.stringify({
+          metadata: {
+            availabilityOverride: { version: "v1", available: false, restoreAt: minutesFrom(-1) },
+          },
+        }),
+        minutesFrom(-5),
+        minutesFrom(-5),
+      )
+      .run();
+    expect((await sweepTenants(db)).SCHEDULED_ORDER_RELEASE).toEqual([busy]);
+    await db
+      .prepare(
+        "UPDATE provider_mappings SET metadata_json = ?, sync_status = 'PENDING' WHERE id = 'timer'",
+      )
+      .bind(
+        JSON.stringify({ metadata: { availabilityOverride: { version: "v2", available: true } } }),
+      )
+      .run();
+    expect((await sweepTenants(db)).SCHEDULED_ORDER_RELEASE).toEqual([busy]);
+    await db.exec("UPDATE provider_mappings SET sync_status = 'SYNCED' WHERE id = 'timer'");
+    expect((await sweepTenants(db)).SCHEDULED_ORDER_RELEASE).toEqual([]);
+  });
+
   it("checks the end-of-day summary only for restaurants with recipients", async () => {
     await record(db, "payments:closingPolicies", "empty", "", { recipientUserIds: [] });
     expect((await sweepTenants(db, { dailySummary: true })).DAILY_SUMMARY_DISPATCH).toEqual([]);
