@@ -13,7 +13,7 @@ import {
   printerRenderingProfile,
   type PrinterConfiguration,
 } from "@/printing/printer-configuration";
-import type { TransactionRepository } from "@/lib/seramet-repository";
+import { loadStateRecords, type TransactionRepository } from "@/lib/seramet-repository";
 import { SerametPrintService, type OrderForPrint } from "@/lib/seramet-print-service";
 import { PlatformConfigurationError } from "@/platform/repositories/configuration-repository";
 import { printablePaymentQr, type PrintPaymentQrInput } from "@/server/print-payment-qr";
@@ -347,7 +347,9 @@ async function reserveDelivery(
   )
     throw new SerametHttpError(403, "Unissued delivery evidence");
   if (["FOOD_KOT", "BAR_TICKET", "DISPATCH_TICKET"].includes(String(job.documentType))) {
-    const state = await repository.loadState(job.tenantId);
+    const state = await loadStateRecords(repository, job.tenantId, [
+      { collection: "kitchenPrintObligations", id: String(job.sourceRecordId) },
+    ]);
     const obligation = state.kitchenPrintObligations?.find(
       (item) => item.id === job.sourceRecordId && item.branchId === job.branchId,
     );
@@ -919,7 +921,25 @@ export async function handlePrintingApi(
   }
   if (input.copyIndex >= printer.copies)
     throw new SerametHttpError(400, "Printer copy limit exceeded");
-  const state = await repository.loadState(actor.tenantId);
+  // One document is rendered, so only that record and what it links to is read: a kitchen
+  // ticket with its order, a receipt with its bill, order and payments, or a bill with its
+  // orders and payments. The record may be old; it is read by key, not from the working set.
+  const state = await loadStateRecords(
+    repository,
+    actor.tenantId,
+    input.documentType === "TEST"
+      ? []
+      : [
+          {
+            collection: ["FOOD_KOT", "BAR_TICKET", "DISPATCH_TICKET"].includes(input.documentType)
+              ? "kitchenPrintObligations"
+              : input.documentType === "RECEIPT"
+                ? "receipts"
+                : "bills",
+            id: input.recordId,
+          },
+        ],
+  );
   let content: string;
   // The typeset approved document, printed by raster (image) printers.
   let rich: RichDocument | undefined;

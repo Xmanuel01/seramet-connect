@@ -387,7 +387,11 @@ describe("categorised Brevo delivery", () => {
         occurredAt: at,
       }),
     ).toBe(false);
-    expect(await pruneEmailDeliveryLog(db, new Date("2027-12-31T00:00:00Z"))).toBe(1);
+    // The row was written just now, and rows are kept for 400 days. Measure from now rather
+    // than a fixed date, which stopped pruning the row once today reached it (2026-11-26).
+    const day = 24 * 60 * 60 * 1_000;
+    expect(await pruneEmailDeliveryLog(db, new Date(Date.now() + 399 * day))).toBe(0);
+    expect(await pruneEmailDeliveryLog(db, new Date(Date.now() + 401 * day))).toBe(1);
   });
 
   describe("webhook and platform access", () => {

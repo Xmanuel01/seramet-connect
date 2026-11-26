@@ -123,6 +123,7 @@ export const migrationFiles = [
   "0036_supabase_hardening.sql",
   "0037_store_issues.sql",
   "0038_etims_oscu.sql",
+  "0039_authoritative_working_set_index.sql",
 ] as const;
 
 export function applyPendingMigrations(database: SqliteD1TestDatabase) {

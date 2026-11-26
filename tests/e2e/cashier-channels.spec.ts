@@ -249,12 +249,24 @@ for (const channelType of ["TAKEAWAY", "DINE_IN", "OWN_DELIVERY"]) {
         )
         .toBe(1);
       const bill = (await snapshot()).state.bills.find((row) => row.orderIds.includes(saved.id))!;
+      // After a reload the invoice row can arrive from the server's day list before the till
+      // has loaded its own copy, and Settle then asks to try again in a moment. Do that.
+      const openSettle = () =>
+        expect(async () => {
+          const notReady = page.getByRole("dialog", { name: "Selection required", exact: true });
+          if (await notReady.isVisible())
+            await notReady.getByRole("button", { name: "OK", exact: true }).click();
+          await page
+            .getByRole("row")
+            .filter({ hasText: invoiceDisplayName(bill.id) })
+            .getByRole("button", { name: "Settle", exact: true })
+            .click();
+          await expect(
+            page.getByRole("dialog").getByRole("button", { name: "Cash", exact: true }),
+          ).toBeVisible({ timeout: 2_000 });
+        }).toPass({ timeout: 30_000 });
       await page.reload();
-      await page
-        .getByRole("row")
-        .filter({ hasText: invoiceDisplayName(bill.id) })
-        .getByRole("button", { name: "Settle", exact: true })
-        .click();
+      await openSettle();
       await page.getByRole("dialog").getByRole("button", { name: "Cash", exact: true }).click();
       await page.getByLabel("Amount", { exact: true }).fill(bill.total.toFixed(2));
       const settle = page
@@ -287,11 +299,7 @@ for (const channelType of ["TAKEAWAY", "DINE_IN", "OWN_DELIVERY"]) {
           .click();
         await staff.setOffline(false);
         await page.reload();
-        await page
-          .getByRole("row")
-          .filter({ hasText: invoiceDisplayName(bill.id) })
-          .getByRole("button", { name: "Settle", exact: true })
-          .click();
+        await openSettle();
         await page.getByRole("dialog").getByRole("button", { name: "Cash", exact: true }).click();
         await settle.dblclick();
       } else await settle.click();

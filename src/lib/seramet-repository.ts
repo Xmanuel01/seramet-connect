@@ -54,8 +54,24 @@ export type IdempotencyRecord = {
   createdAt: string;
 };
 
+/** A record to read by id, with the records it links to (see `loadStateRecords`). */
+export type StateRecordRef = {
+  collection: "orders" | "bills" | "receipts" | "kitchenPrintObligations";
+  id: string;
+};
+
 export type TransactionRepository = {
   loadState: (tenantId: string) => Promise<TransactionState>;
+  /**
+   * The tenant's open and recent records only, for reads that never need closed history.
+   * The result is partial: it is for reading, and must never be saved back.
+   */
+  loadWorkingSet?: (tenantId: string) => Promise<TransactionState>;
+  /**
+   * Only the named records and the records they link to (a bill's orders, payments and
+   * receipt, an order's bill, and so on), however old they are. Partial, read-only.
+   */
+  loadRecords?: (tenantId: string, refs: StateRecordRef[]) => Promise<TransactionState>;
   /**
    * With expectedRevision, the save is refused (CONFLICT) if anything was committed since the
    * state was loaded at that revision, instead of overwriting it.
@@ -78,6 +94,27 @@ export type TransactionRepository = {
   migrate: () => Promise<void>;
   readonly authoritative: boolean;
 };
+
+/**
+ * The tenant's open and recent records. A repository without a working-set loader (the
+ * in-memory one, test doubles) answers with the full state, which contains them.
+ */
+export function loadLiveState(repository: TransactionRepository, tenantId: string) {
+  return repository.loadWorkingSet
+    ? repository.loadWorkingSet(tenantId)
+    : repository.loadState(tenantId);
+}
+
+/** The named records and what they link to; the full state where there is no by-id loader. */
+export function loadStateRecords(
+  repository: TransactionRepository,
+  tenantId: string,
+  refs: StateRecordRef[],
+) {
+  return repository.loadRecords
+    ? repository.loadRecords(tenantId, refs)
+    : repository.loadState(tenantId);
+}
 
 export type TransactionMutationCommit = {
   actor: ServerActor;

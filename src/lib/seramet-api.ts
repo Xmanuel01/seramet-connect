@@ -33,6 +33,7 @@ import {
   type ServerActor,
 } from "@/lib/seramet-auth";
 import {
+  loadLiveState,
   TransactionConflictError,
   type TransactionMutationResult,
   type TransactionRepository,
@@ -397,7 +398,8 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
 
     if (url.pathname === "/api/seramet/payments/mpesa/unmatched" && request.method === "GET") {
       const actor = await requirePermission(request, env, permissions.paymentsMatch);
-      const state = await repo.loadState(actor.tenantId);
+      // Unapplied payments and open bills are all in the working set, whatever their age.
+      const state = await loadLiveState(repo, actor.tenantId);
       return json({
         ok: true,
         payments: unmatchedDirectPayments(state, actor.tenantId, actor.branchId),
