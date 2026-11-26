@@ -38,7 +38,7 @@ const availableReports = [
     label: "Supplier performance",
     detail: "Delivery and price performance by supplier",
   },
-  { to: "/attendance", label: "Attendance", detail: "Hours worked by staff" },
+  { to: "/schedule", label: "Team timecards", detail: "Hours worked by staff" },
 ] as const;
 
 function Reports() {

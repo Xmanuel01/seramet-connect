@@ -4,6 +4,7 @@ import { Activity, Printer } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { PrinterAdministration } from "@/components/app/PrinterAdministration";
 import { ReceiptLogoPanel } from "@/components/app/ReceiptLogoPanel";
+import { KitchenModeChooser } from "@/components/app/KitchenModeChooser";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { KitchenPrintBypassPanel } from "@/components/app/KitchenPrintBypassPanel";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
@@ -25,7 +26,6 @@ import {
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import {
   documentTypeLabels,
-  kitchenModeLabels,
   kitchenTicketKindLabels,
   kitchenTicketStatusLabels,
   printerRoleLabels,
@@ -418,9 +418,19 @@ function SerametPrinters() {
             right={<Printer className="h-4 w-4 text-warning" />}
           />
           <div className="space-y-3 p-4 text-[13px]">
-            <p className="max-w-2xl text-muted-foreground">
-              {configurationError ?? "Printing isn't set up for this branch yet."}
-            </p>
+            {configurationError === "Kitchen operating mode is not configured" ? (
+              <>
+                <p className="max-w-2xl">
+                  Choose how orders reach the kitchen. Until you do, tills can&apos;t send orders to
+                  the kitchen.
+                </p>
+                <KitchenModeChooser />
+              </>
+            ) : (
+              <p className="max-w-2xl text-muted-foreground">
+                {configurationError ?? "Printing isn't set up for this branch yet."}
+              </p>
+            )}
             <p className="max-w-2xl text-muted-foreground">
               Finish printer setup in Setup Centre, then come back to print a test page.
             </p>
@@ -598,7 +608,8 @@ function SerametPrinters() {
       <Panel className="mb-4">
         <PanelHead
           title="What prints where"
-          sub={`Kitchen orders go to: ${kitchenModeLabels[profile.kitchenMode] ?? profile.kitchenMode}`}
+          sub="Each document and the printer it prints on."
+          right={<KitchenModeChooser current={profile.kitchenMode} />}
         />
         <div className="overflow-x-auto">
           <table aria-label="What prints where" className="w-full">

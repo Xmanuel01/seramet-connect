@@ -3712,6 +3712,7 @@ export class OnboardingService {
       providerId: input.providerId,
       capabilities: provider.definition.capabilities,
       secretConfigured: Boolean(secretReference),
+      ...(callback ? { callbackUrl: callback } : {}),
     };
   }
 
@@ -4302,29 +4303,36 @@ export class OnboardingService {
       )
       .bind(this.actor.tenantId)
       .all<Row>();
-    return (rows.results ?? []).map((row) => {
-      const adapter = getProviderRegistry().get(string(row.provider_id));
-      const health = providerHealth(string(row.status), number(row.dead_letters));
-      return {
-        connectionId: string(row.id),
-        providerId: string(row.provider_id),
-        displayName: adapter?.definition.displayName ?? string(row.provider_id),
-        category: adapter?.definition.category ?? "OTHER",
-        ...(row.branch_id ? { branchId: string(row.branch_id) } : {}),
-        environment: string(row.environment),
-        status: string(row.status),
-        health,
-        capabilities: adapter?.definition.capabilities ?? [],
-        ...(row.last_success ? { lastSuccess: string(row.last_success) } : {}),
-        ...(row.last_failure ? { lastFailure: string(row.last_failure) } : {}),
-        ...(row.last_webhook ? { lastWebhook: string(row.last_webhook) } : {}),
-        pendingQueue: number(row.pending_queue),
-        deadLetters: number(row.dead_letters),
-        ...(row.credentials_age_days !== null && row.credentials_age_days !== undefined
-          ? { credentialsAgeDays: number(row.credentials_age_days) }
-          : {}),
-      };
-    });
+    // A branch-scoped manager sees only connections for branches they can read.
+    return (rows.results ?? [])
+      .filter((row) =>
+        row.branch_id
+          ? this.canReadBranch(string(row.branch_id))
+          : this.actor.branchScope.type === "ALL",
+      )
+      .map((row) => {
+        const adapter = getProviderRegistry().get(string(row.provider_id));
+        const health = providerHealth(string(row.status), number(row.dead_letters));
+        return {
+          connectionId: string(row.id),
+          providerId: string(row.provider_id),
+          displayName: adapter?.definition.displayName ?? string(row.provider_id),
+          category: adapter?.definition.category ?? "OTHER",
+          ...(row.branch_id ? { branchId: string(row.branch_id) } : {}),
+          environment: string(row.environment),
+          status: string(row.status),
+          health,
+          capabilities: adapter?.definition.capabilities ?? [],
+          ...(row.last_success ? { lastSuccess: string(row.last_success) } : {}),
+          ...(row.last_failure ? { lastFailure: string(row.last_failure) } : {}),
+          ...(row.last_webhook ? { lastWebhook: string(row.last_webhook) } : {}),
+          pendingQueue: number(row.pending_queue),
+          deadLetters: number(row.dead_letters),
+          ...(row.credentials_age_days !== null && row.credentials_age_days !== undefined
+            ? { credentialsAgeDays: number(row.credentials_age_days) }
+            : {}),
+        };
+      });
   }
 
   async deviceHealth(): Promise<DeviceHealthRow[]> {
@@ -5002,6 +5010,7 @@ export class OnboardingService {
       documentCount,
       successfulTests,
       verifiedBackups,
+      branchesWithoutKitchenMode,
       branchPolicy,
     ] = await Promise.all([
       batch.count(
@@ -5067,6 +5076,14 @@ export class OnboardingService {
       batch.count(
         `SELECT COUNT(*) count FROM backup_records WHERE tenant_id=? AND status IN ('SUCCEEDED','VERIFIED') AND verified_at IS NOT NULL`,
         this.actor.tenantId,
+      ),
+      // Until a branch chooses how kitchen orders reach the kitchen, its tills can't send any.
+      batch.count(
+        `SELECT COUNT(*) count FROM branches WHERE tenant_id=? AND active=1 AND (? IS NULL OR id=?)
+         AND payload_json NOT LIKE '%"kitchenMode":"%'`,
+        this.actor.tenantId,
+        branchId ?? null,
+        branchId ?? null,
       ),
       branchId ? this.branchPolicy(branchId) : this.combinedBranchPolicy(),
       batch.run(),
@@ -5288,6 +5305,16 @@ export class OnboardingService {
       `${stationCount} active station(s) found`,
       "Configure production stations and KDS routing",
       { evidence: { count: stationCount } },
+    );
+    add(
+      "KITCHEN_STATIONS",
+      "KITCHEN_MODE_CHOSEN",
+      branchesWithoutKitchenMode === 0,
+      branchesWithoutKitchenMode === 0
+        ? "How orders reach the kitchen is chosen"
+        : "Not chosen how orders reach the kitchen, so tills can't send orders yet",
+      "Choose how orders reach the kitchen (Printers page, What prints where)",
+      { evidence: { branchesWithoutKitchenMode } },
     );
     if (printingRequired)
       add(

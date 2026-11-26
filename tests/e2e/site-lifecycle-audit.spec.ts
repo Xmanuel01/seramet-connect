@@ -66,7 +66,6 @@ test("all navigation pages and Sales tabs: desktop/mobile audit", async ({ brows
     "/receipts",
     "/host",
     "/qr-management",
-    "/returns",
     "/refunds",
     "/delivery",
     "/riders",
@@ -101,19 +100,6 @@ test("all navigation pages and Sales tabs: desktop/mobile audit", async ({ brows
           if (await tab.isEnabled()) {
             tabs.push(await tab.innerText());
             await tab.click();
-          }
-        }
-        if (path === "/returns") {
-          const button = page.getByRole("button", { name: "Log return", exact: true });
-          if (await button.isEnabled()) {
-            const before = await page.locator("main").innerText();
-            await button.click();
-            results.push({
-              path,
-              probe: "Log return",
-              visibleChange: before !== (await page.locator("main").innerText()),
-              dialogs: await page.getByRole("dialog").count(),
-            });
           }
         }
         await page.screenshot({

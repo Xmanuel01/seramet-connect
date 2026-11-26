@@ -450,10 +450,11 @@ function POS() {
       const baseline = orderBaseline.current;
       if (!baseline)
         throw new Error("Wait for the selected order to finish loading before saving.");
+      // A draft older than the saved order pins the revision it was based on, so the save is
+      // refused. An up-to-date draft leaves it unpinned: a change elsewhere in the restaurant
+      // then doesn't block it (the engine resends when this order is unchanged).
       expectedRevision =
-        (await digestOrder(activeOrder)) === baseline.digest
-          ? transactionRevision
-          : baseline.revision;
+        (await digestOrder(activeOrder)) === baseline.digest ? undefined : baseline.revision;
     }
     const result = await mutateBackendTransaction(
       action,
@@ -820,6 +821,10 @@ function POS() {
     tenant.defaultCurrency,
   );
   const tax = majorFromMinor(taxTotals.reported + serviceTotals.reported, tenant.defaultCurrency);
+  // Prices that already include VAT and service show them as "included", not as an add-on.
+  const chargesIncluded =
+    taxTotals.reported + serviceTotals.reported > 0 && taxTotals.added + serviceTotals.added === 0;
+  const taxLabel = chargesIncluded ? "Included tax and service" : "Tax and service";
   const total = majorFromMinor(
     subtotalMinor + taxTotals.added + serviceTotals.added + deliveryAmountMinor,
     tenant.defaultCurrency,
@@ -2166,7 +2171,7 @@ function POS() {
                   </div>
                 )}
                 <div className="flex justify-between text-muted-foreground">
-                  <dt>Tax and service</dt>
+                  <dt>{taxLabel}</dt>
                   <dd className="num">{formatMoney(tax)}</dd>
                 </div>
                 <div className="flex justify-between border-t border-border pt-2 text-[16px] font-bold">
@@ -2382,7 +2387,7 @@ function POS() {
                     </div>
                   )}
                   <div className="flex justify-between">
-                    <dt className="text-muted-foreground">Tax and service</dt>
+                    <dt className="text-muted-foreground">{taxLabel}</dt>
                     <dd className="num font-semibold">{formatMoney(tax)}</dd>
                   </div>
                   <div className="flex justify-between border-t border-border pt-2">
@@ -2430,7 +2435,7 @@ function POS() {
                 </div>
               )}
               <div className="flex justify-between text-muted-foreground">
-                <dt>Tax and service</dt>
+                <dt>{taxLabel}</dt>
                 <dd className="num">{formatMoney(tax)}</dd>
               </div>
               <div className="flex justify-between border-t border-border pt-2 text-[16px] font-bold">

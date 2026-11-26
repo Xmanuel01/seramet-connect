@@ -180,7 +180,7 @@ function People() {
             title="Today"
             right={
               <Btn onClick={() => void navigate({ to: "/schedule" })}>
-                Attendance <ArrowRight className="h-4 w-4" />
+                Team timecards <ArrowRight className="h-4 w-4" />
               </Btn>
             }
           />

@@ -73,6 +73,20 @@ export const staffRolePresets: Record<string, { label: string; permissions: Perm
       p.procurementView,
       p.procurementRequisitionCreate,
       p.inventoryIssueRequest,
+      // Runs the end of the day: counts cashier drawers and closes the business day.
+      // Payments at "Use" and Reconciliation at "Manage" in the role editor.
+      p.paymentsView,
+      p.paymentsRecord,
+      p.paymentsCollect,
+      p.cashOpen,
+      p.cashClose,
+      p.reconciliationView,
+      p.reconciliationManage,
+      p.paymentsReconcile,
+      p.settlementsImport,
+      p.branchesReconcile,
+      p.reconciliationApprove,
+      p.settlementsPost,
     ],
   },
 };
