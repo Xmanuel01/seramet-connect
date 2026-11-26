@@ -317,7 +317,7 @@ function MarketplaceControlCentre() {
   );
 
   const previewSync = async () => {
-    if (!selectedConnectionId) return setNotice("Select a marketplace connection first.");
+    if (!selectedConnectionId) return setNotice("Choose a store first.");
     setWorking(true);
     try {
       const response = await fetch(
@@ -336,7 +336,7 @@ function MarketplaceControlCentre() {
         return;
       setPreview(payload.preview);
       setPreviewMenu(payload.menu);
-      setNotice("Preview generated from the current Seramet menu and mappings.");
+      setNotice("Preview ready.");
     } catch (error) {
       if (currentScope.current === scope && currentConnection.current === selectedConnectionId)
         setNotice(error instanceof Error ? error.message : "Menu preview failed");
@@ -346,7 +346,7 @@ function MarketplaceControlCentre() {
   };
 
   const syncMenu = async () => {
-    if (!preview) return setNotice("Preview the menu before synchronizing.");
+    if (!preview) return setNotice("Preview the menu first.");
     await postAction(
       "/api/seramet/integrations/marketplace/menu-sync",
       {
@@ -359,8 +359,7 @@ function MarketplaceControlCentre() {
   };
 
   const syncIncremental = async (kind: "availability" | "price") => {
-    if (!previewMenu || !selectedConnectionId)
-      return setNotice("Preview the current menu before queuing an incremental sync.");
+    if (!previewMenu || !selectedConnectionId) return setNotice("Preview the menu first.");
     setWorking(true);
     try {
       for (const item of previewMenu.items) {
@@ -423,7 +422,7 @@ function MarketplaceControlCentre() {
     postAction(
       "/api/seramet/integrations/workers/recover-marketplace-orders",
       { connectionId: selectedConnectionId },
-      "Active provider orders recovered through the normal ingestion workflow.",
+      "Open orders brought in from the app.",
     );
 
   async function postAction(path: string, body: unknown, success: string) {
@@ -496,7 +495,7 @@ function MarketplaceControlCentre() {
   return (
     <AppShell
       title={store ? store.displayName : "Marketplace"}
-      subtitle={store ? `${branchLabel} · Marketplace store` : branchLabel}
+      subtitle={branchLabel}
       actions={
         <Btn onClick={() => void loadDiagnostics()} disabled={working}>
           <RefreshCw className="h-4 w-4" /> Refresh
@@ -510,7 +509,7 @@ function MarketplaceControlCentre() {
       )}
       {connections.some((connection) => connection.metadata["localSimulation"]) && (
         <div className="mb-4 border-l-4 border-warning bg-warning-soft px-4 py-2 text-sm">
-          Local simulation · sample orders · no marketplace requests
+          Test mode · sample orders
         </div>
       )}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -792,7 +791,7 @@ function MarketplaceControlCentre() {
                         void postAction(
                           "/api/seramet/integrations/marketplace/decision/recover",
                           { branchId, recordId: decision.id },
-                          "Provider decision verified and POS updated.",
+                          "Done. The order is updated.",
                         )
                       }
                     >
@@ -939,7 +938,7 @@ function MarketplaceControlCentre() {
                     <Status>{order.progress.progress}</Status>
                   </div>
                   <div className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
-                    <Mini label="Provider confirmation" value={order.progress.provider} />
+                    <Mini label="App confirmed" value={order.progress.provider} />
                     <Mini label="Amount" value={formatMoney(order.total)} />
                     <Mini
                       label="Prep"
@@ -1291,7 +1290,7 @@ function MarketplaceControlCentre() {
                     <Mini label="Availability" value={String(preview.counts.availabilityChanges)} />
                     <Mini label="New" value={String(preview.counts.newItems)} />
                     <Mini
-                      label="Unmapped"
+                      label="Not linked"
                       value={String(preview.counts.unmapped)}
                       warning={preview.counts.unmapped > 0}
                     />
@@ -1322,7 +1321,7 @@ function MarketplaceControlCentre() {
                         <div className="min-w-0">
                           <div className="truncate text-[12px] font-semibold">{operation.name}</div>
                           <div className="truncate text-[10px] text-muted-foreground">
-                            {operation.externalId ?? "No external ID"}
+                            {operation.externalId ?? "—"}
                           </div>
                         </div>
                         <Status>{operation.operation.replaceAll("_", " ")}</Status>
@@ -1331,7 +1330,7 @@ function MarketplaceControlCentre() {
                   </div>
                 </>
               ) : (
-                <Empty text="Choose a connection and preview the current Seramet menu." />
+                <Empty text="Choose a store and preview the menu." />
               )}
             </div>
           </Panel>
@@ -1407,19 +1406,19 @@ function MarketplaceControlCentre() {
               </label>
               <div className="grid grid-cols-2 gap-2">
                 <Mini
-                  label="Store mappings"
+                  label="Linked stores"
                   value={String(
                     selectedMappings.filter((mapping) => mapping.resourceType === "STORE").length,
                   )}
                 />
                 <Mini
-                  label="Item mappings"
+                  label="Linked items"
                   value={String(
                     selectedMappings.filter((mapping) => mapping.resourceType === "ITEM").length,
                   )}
                 />
                 <Mini
-                  label="Unmapped"
+                  label="Not linked"
                   value={String(
                     selectedMappings.filter((mapping) =>
                       ["UNMAPPED", "CONFLICT"].includes(mapping.status),
@@ -1427,7 +1426,7 @@ function MarketplaceControlCentre() {
                   )}
                 />
                 <Mini
-                  label="Pending sync"
+                  label="Waiting to send"
                   value={String(
                     selectedMappings.filter((mapping) => mapping.syncStatus === "PENDING").length,
                   )}
@@ -1486,7 +1485,7 @@ function MarketplaceControlCentre() {
                 href="/integrations"
                 className="block rounded-md border border-border px-3 py-2 text-center text-[12px] font-semibold text-primary hover:bg-secondary"
               >
-                Resolve mappings in Integrations
+                Link items in Integrations
               </a>
             </div>
           </Panel>
@@ -1522,10 +1521,7 @@ function MarketplaceControlCentre() {
 
       {tab === "EXCEPTIONS" && (
         <Panel className="mt-4">
-          <PanelHead
-            title="Live order exceptions"
-            sub="Mapping, provider, SLA and outbound synchronization failures"
-          />
+          <PanelHead title="Problems" />
           <div className="divide-y divide-border">
             {branchOrders
               .filter((order) => order.slaWarning)
@@ -1561,7 +1557,7 @@ function MarketplaceControlCentre() {
               />
             ))}
             {!openExceptions.length && !branchOrders.some((order) => order.slaWarning) && (
-              <Empty text="No current marketplace exceptions." />
+              <Empty text="No problems." />
             )}
           </div>
         </Panel>

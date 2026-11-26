@@ -102,7 +102,7 @@ export function StoreMenuEditor({
       setMenu({ ...menu, selectedItemIds: [...chosen] });
       setMessage({
         tone: "ok",
-        text: `Saved: ${storeName} sells ${chosen.size} item(s). Use Menu → Preview to send it to the app.`,
+        text: `Saved: ${chosen.size} item(s). Send it to the app from Menu → Preview.`,
       });
       onSaved?.();
     } catch (error) {
@@ -122,7 +122,7 @@ export function StoreMenuEditor({
         title={`${storeName} menu`}
         sub={
           menu
-            ? `${chosen.size} of ${total} branch items${menu.selectedItemIds ? "" : " (whole branch menu until you save a choice)"}`
+            ? `${chosen.size} of ${total} branch items${menu.selectedItemIds ? "" : " (whole menu until you save)"}`
             : "Loading the branch menu"
         }
         right={
@@ -138,10 +138,7 @@ export function StoreMenuEditor({
         }
       />
       <div className="grid gap-3 p-4">
-        <p className="text-[12px] text-muted-foreground">
-          Tick the items this store sells. Each store on this branch has its own list, and menu,
-          price and availability updates for this store send only these items.
-        </p>
+        <p className="text-[12px] text-muted-foreground">Tick the items this store sells.</p>
         <input
           value={search}
           onChange={(event) => setSearch(event.target.value)}

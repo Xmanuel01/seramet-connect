@@ -69,7 +69,7 @@ function OnlineOrders() {
   return (
     <AppShell
       title="Online orders"
-      subtitle={`Channel orders routed into the unified Seramet order engine - ${branchLabel}`}
+      subtitle={branchLabel}
       actions={
         <Btn
           onClick={() => {
@@ -81,7 +81,7 @@ function OnlineOrders() {
             setSyncNotice(
               connections.length
                 ? `${connections.length} connected channel${connections.length === 1 ? "" : "s"} queued for synchronization.`
-                : "No connected order provider is available. Configure one in Integrations.",
+                : "No delivery app connected. Add one in Integrations.",
             );
           }}
         >
