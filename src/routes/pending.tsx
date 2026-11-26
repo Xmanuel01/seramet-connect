@@ -195,11 +195,11 @@ function PendingInvoices() {
       );
       if (!response.ok) {
         const body = (await response.json().catch(() => ({}))) as { message?: string };
-        setWarning(body.message ?? "Provider payment could not be initiated.");
+        setWarning(body.message ?? "Payment request could not be sent.");
         return;
       }
       await syncFromBackend();
-      setWarning("Payment request initiated. The invoice stays open until verified confirmation.");
+      setWarning("Payment request sent. The invoice stays open until the payment is confirmed.");
       setSettleInvoice(null);
       return;
     }
@@ -221,9 +221,9 @@ function PendingInvoices() {
     if (disposition === "CONFIRMED") {
       setReceiptPrompt(settleInvoice);
     } else if (disposition === "AWAITING_VERIFICATION") {
-      setWarning("Payment reference recorded for verification. No paid receipt was generated.");
+      setWarning("Reference saved. It's marked paid once checked.");
     } else if (disposition === "ON_ACCOUNT") {
-      setWarning("Invoice posted to the configured customer receivable account.");
+      setWarning("Added to the customer's account.");
     }
     setSettleInvoice(null);
   };
@@ -231,7 +231,7 @@ function PendingInvoices() {
   return (
     <AppShell
       title="Pending"
-      subtitle={`Deferred invoices and unpaid bills - ${branchLabel}`}
+      subtitle={branchLabel}
       actions={<Btn onClick={exportRows}>Export</Btn>}
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -243,7 +243,6 @@ function PendingInvoices() {
       <Panel className="mt-4">
         <PanelHead
           title="Pending settlements"
-          sub="Invoices that need to be collected or reconciled later"
           right={<SearchInput placeholder="Search pending invoice..." />}
         />
         <div className="px-4 pt-3">
@@ -405,13 +404,12 @@ function PendingInvoices() {
               </div>
               {selectedSettlementMethod?.category === "CREDIT" && (
                 <div className="rounded-md bg-info-soft px-3 py-2 text-[12px] font-semibold text-info">
-                  Credit settlement posts this pending invoice to the customer or partner receivable
-                  account.
+                  Added to the customer's account to collect later.
                 </div>
               )}
               {settlementMethod === "PENDING" && (
                 <div className="rounded-md bg-warning-soft px-3 py-2 text-[12px] font-semibold text-warning">
-                  Pending keeps the invoice open for later settlement after restaurant close.
+                  The invoice stays open to settle later.
                 </div>
               )}
               <div className="flex justify-end gap-2 border-t border-border pt-4">

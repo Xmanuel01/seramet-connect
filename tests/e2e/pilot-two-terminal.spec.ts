@@ -73,7 +73,7 @@ test("two terminals preserve local drafts and enforce one authoritative revision
   await expect(cashierPage.getByLabel(/Connection: Online/)).toBeVisible();
 
   await cashierPage.getByRole("button", { name: "Hold", exact: true }).click();
-  await expect(cashierPage.getByText("Order held in active orders.")).toBeVisible();
+  await expect(cashierPage.getByText("Order held.")).toBeVisible();
   const heldOrder = await cashierPage.evaluate(async () => {
     const response = await fetch("/api/seramet/transactions");
     const result = (await response.json()) as {
@@ -250,7 +250,7 @@ test("disposable cash shift persists hold, kitchen, invoice, receipt, drawer and
     await controlPage.getByRole("button", { name: "Add Pilot meal to order" }).click();
     await controlPage.getByPlaceholder("Item note").fill("Branch A isolation sentinel");
     await controlPage.getByRole("button", { name: "Hold", exact: true }).click();
-    await expect(controlPage.getByText("Order held in active orders.")).toBeVisible();
+    await expect(controlPage.getByText("Order held.")).toBeVisible();
   } finally {
     await control.close();
   }
@@ -309,7 +309,7 @@ test("disposable cash shift persists hold, kitchen, invoice, receipt, drawer and
   await page.getByRole("button", { name: "Add Pilot meal to order" }).click();
   await page.getByPlaceholder("Item note").fill("Disposable cash shift - no onion");
   await page.getByRole("button", { name: "Hold", exact: true }).click();
-  await expect(page.getByText("Order held in active orders.")).toBeVisible();
+  await expect(page.getByText("Order held.")).toBeVisible();
   const held = (await snapshot()).state.orders.find(
     (order) => !before.state.orders.some((old) => old.id === order.id),
   )!;

@@ -333,7 +333,7 @@ function POS() {
       })
       .catch(() => {
         if (!controller.signal.aborted) {
-          setPrintNotice("Select the customer again before saving this recovered order.");
+          setPrintNotice("Choose the customer again before saving.");
           setPrintNoticeType("warning");
         }
       });
@@ -582,14 +582,12 @@ function POS() {
   const runOrderAction = async (action: () => Promise<void>) => {
     if (orderActionRef.current) return;
     if (selectedOrderUnavailable) {
-      setPrintNotice(
-        "The selected order has not loaded. Wait for reconnection or verify it in Orders before continuing.",
-      );
+      setPrintNotice("This order hasn't loaded yet. Wait a moment or check it in Orders.");
       setPrintNoticeType("warning");
       return;
     }
     if (recoverCustomerId) {
-      setPrintNotice("Verify the recovered customer selection before saving.");
+      setPrintNotice("Check the customer before saving.");
       setPrintNoticeType("warning");
       return;
     }
@@ -1045,7 +1043,7 @@ function POS() {
       }
       try {
         await createOrUpdateActiveOrder("HELD");
-        clearCurrentOrder("Order held in active orders.");
+        clearCurrentOrder("Order held.");
       } catch (error) {
         setPrintNotice(error instanceof Error ? error.message : "The order could not be held.");
         setPrintNoticeType("warning");
@@ -1104,7 +1102,7 @@ function POS() {
       ];
     });
     if (!previewLines.length && activeOrder) {
-      setPrintNotice("No new kitchen items require a KOT amendment.");
+      setPrintNotice("Nothing new to send to the kitchen.");
       setPrintNoticeType("idle");
       return {
         order: activeOrder,
@@ -1145,16 +1143,17 @@ function POS() {
     kitchenOrderAcceptedRef.current = true;
     if (resultState && "offline" in resultState && resultState.offline) {
       throw new Error(
-        "Kitchen command is queued for offline reconciliation. No authoritative " +
-          "KOT has been accepted or printed yet. Do not submit it again; recover " +
-          "the original ticket in Printers after reconnecting.",
+        "You're offline, so the kitchen hasn't got this order yet. Don't send it " +
+          "again; check it in Printers when you're back online.",
       );
     }
     const authoritativeOrder = activeOrder?.id
       ? resultState?.state.orders.find((candidate) => candidate.id === activeOrder.id)
       : resultState?.state.orders.find((candidate) => !knownOrderIds.has(candidate.id));
     if (!authoritativeOrder || !resultState?.state) {
-      throw new Error("Kitchen order did not receive an authoritative identity.");
+      throw new Error(
+        "The kitchen didn't confirm this order. Check Orders before sending it again.",
+      );
     }
     const ticketLines = authoritativeOrder.lines.filter(
       (line) => line.sentAt && !sentLineIds.has(line.id),
@@ -1171,7 +1170,7 @@ function POS() {
               hour: "numeric",
               minute: "2-digit",
             })}.`
-          : "No new kitchen items require a KOT amendment.",
+          : "Nothing new to send to the kitchen.",
       );
       setPrintNoticeType("idle");
       return {
@@ -1198,10 +1197,7 @@ function POS() {
       };
     }
     if (!obligations.length) {
-      throw new Error(
-        "Kitchen accepted the order but did not expose a durable KOT obligation. " +
-          "Review the server KOT outbox before attempting another dispatch.",
-      );
+      throw new Error("The kitchen ticket wasn't created. Check Printers before sending again.");
     }
     // Claim the entire multi-station dispatch in one authoritative mutation.
     // A partial claim could strand one station in CLAIMED if another station
@@ -1248,10 +1244,7 @@ function POS() {
             });
           })
           .catch(() => {
-            setPrintNotice(
-              "Kitchen dispatch was recorded, but its print acknowledgement could not be " +
-                "saved. Review the durable KOT status in Printers & Devices.",
-            );
+            setPrintNotice("Order sent, but its print status wasn't saved. Check Printers.");
             setPrintNoticeType("warning");
           });
       };
@@ -1305,14 +1298,10 @@ function POS() {
         : next;
     }
     if (rejected.length) {
-      throw new Error(
-        "Kitchen accepted the order but one KOT route was not queued. " +
-          "Inspect the durable obligation in Printers. " +
-          rejected.join("; "),
-      );
+      throw new Error("One kitchen ticket wasn't sent. Check Printers. " + rejected.join("; "));
     }
     if (!printResult?.jobs.length) {
-      throw new Error("No durable KOT claim produced a delivery job; inspect Printers");
+      throw new Error("No kitchen ticket was sent. Check Printers.");
     }
     setTrackedPrint({
       jobIds: queuedJobIds,
@@ -1323,8 +1312,8 @@ function POS() {
     if (printResult.jobs.length > 0) {
       setPrintNotice(
         amendmentType === "ADDITION"
-          ? "Kitchen amendment queued — waiting for delivery confirmation."
-          : "Kitchen ticket queued — waiting for delivery confirmation.",
+          ? "Kitchen update sent — waiting for the printer."
+          : "Kitchen ticket sent — waiting for the printer.",
       );
       setPrintNoticeType("idle");
     } else {
@@ -1446,7 +1435,7 @@ function POS() {
     if (table.orderId) {
       if (table.orderId !== activeOrderId && hasUnsentItems) {
         setPrintNotice(
-          `Table ${table.no} already has ${table.orderId}. Your current unsent items were kept; start a new order or send/hold them before switching.`,
+          `Table ${table.no} already has ${table.orderId}. Send or hold your items before switching.`,
         );
         setPrintNoticeType("warning");
         return;
@@ -1459,13 +1448,13 @@ function POS() {
       return;
     }
     if (channelLocked && activeOrder?.table && activeOrder.table !== table.no) {
-      setPrintNotice("Table assignment is locked after an order has been sent to production.");
+      setPrintNotice("The table can't change once the order is in the kitchen.");
       setPrintNoticeType("warning");
       return;
     }
     setSelectedTableNo(table.no);
     setTablePickerOpen(false);
-    setPrintNotice(`Table ${table.no} selected. Review the order, then press Send kitchen.`);
+    setPrintNotice(`Table ${table.no} selected.`);
     setPrintNoticeType("idle");
   };
 
@@ -1674,7 +1663,7 @@ function POS() {
                   <div className="max-h-80 space-y-1 overflow-y-auto">
                     {activePosOrders.length === 0 && (
                       <div className="rounded-md border border-dashed border-border px-3 py-4 text-[12px] text-muted-foreground">
-                        No held or kitchen orders waiting in POS.
+                        No open orders.
                       </div>
                     )}
                     {activePosOrders.map((order) => (
@@ -1867,9 +1856,7 @@ function POS() {
                   />
                 </label>
                 <p className="text-[11px] text-muted-foreground sm:col-span-2">
-                  The app pays the rest with its payout. Anything due on delivery is collected on
-                  Invoices. With a ready-by time, the kitchen gets the order when its prep should
-                  start.
+                  The app pays the rest. Anything due on delivery is collected on Invoices.
                 </p>
               </div>
             )}
@@ -1928,8 +1915,7 @@ function POS() {
             )}
             {operationalMenu.status === "ready" && branchMenu.length === 0 && (
               <div className="mb-3 rounded-lg border border-border bg-card px-3 py-4 text-[12px] text-muted-foreground">
-                No sellable menu items are configured for this branch. Use Setup Centre or Menu
-                Import before taking orders.
+                No menu items yet. Add them in Setup Centre or Menu Import.
               </div>
             )}
             {branchMenu.length > 0 && visible.length === 0 && (
@@ -2272,7 +2258,7 @@ function POS() {
             <DialogHeader>
               <DialogTitle>Select table</DialogTitle>
               <DialogDescription>
-                Choose a free table for this order, or open the existing order on an occupied table.
+                Pick a free table, or a busy one to open its order.
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
@@ -2288,9 +2274,6 @@ function POS() {
                 {floorTables.length === 0 && (
                   <div className="rounded-xl border border-dashed border-border p-6 text-sm">
                     <p className="font-semibold">No tables are set up for this branch yet.</p>
-                    <p className="mt-1 text-muted-foreground">
-                      Add your tables once and they will appear here for every dine-in order.
-                    </p>
                     <div className="mt-4 flex flex-wrap items-center gap-2">
                       <AddTableDialog
                         branchLabel={branchLabel}
@@ -2395,11 +2378,6 @@ function POS() {
                     <dd className="num font-bold">{formatMoney(total)}</dd>
                   </div>
                 </dl>
-                <div className="mt-4 rounded-md bg-card px-3 py-2 text-[12px] text-muted-foreground">
-                  Selecting a free table does not send the order automatically. Review the order,
-                  then press Send kitchen. Occupied tables open their existing order instead of
-                  creating a duplicate.
-                </div>
               </aside>
             </div>
           </DialogContent>
@@ -2517,10 +2495,10 @@ function kitchenFailureReason(error: unknown) {
 function cashierErrorMessage(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message : fallback;
   if (/open a cash drawer/i.test(message)) {
-    return "Cash is unavailable: open a cash drawer in Payment Control, then retry.";
+    return "Open a cash drawer in Payment Control first.";
   }
   if (/changed on another terminal|conflict/i.test(message)) {
-    return "This order changed on another terminal. Reopen it before continuing.";
+    return "This order changed on another till. Open it again.";
   }
   if (/printer|KOT|KDS|routing/i.test(message)) {
     return message;

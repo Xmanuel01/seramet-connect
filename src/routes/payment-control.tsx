@@ -1042,7 +1042,7 @@ function PaymentDetails({
 }) {
   return (
     <aside className="border-t border-border p-4 xl:border-l xl:border-t-0">
-      <PanelHead title="Payment details" sub="Where it was applied, and its history" />
+      <PanelHead title="Payment details" />
       {transaction ? (
         <div className="space-y-4 pt-4">
           <div className="grid grid-cols-2 gap-2 text-[12px]">

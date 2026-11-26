@@ -352,7 +352,7 @@ test("staff account creation through sale and supervisor business-day close", as
       await expect(cashier.getByPlaceholder("Item note")).toHaveValue(note);
     }
     await cashier.getByRole("button", { name: "Hold", exact: true }).click();
-    await expect(cashier.getByText("Order held in active orders.")).toBeVisible();
+    await expect(cashier.getByText("Order held.")).toBeVisible();
     let current = await snapshot();
     const held = current.state.orders.find((order) =>
       order.lines.some((line) => line.itemNote === note),

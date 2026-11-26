@@ -389,7 +389,7 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       .getByPlaceholder("Special request for kitchen or bar")
       .fill("Keep sauce separate; allergy test only");
     await cashier.getByRole("button", { name: "Hold", exact: true }).click();
-    await expect(cashier.getByText("Order held in active orders.")).toBeVisible();
+    await expect(cashier.getByText("Order held.")).toBeVisible();
     const held = (await snapshot()).state.orders.find(
       (order: { status: string; lines: unknown[] }) =>
         order.status === "HELD" && order.lines.length === 3,

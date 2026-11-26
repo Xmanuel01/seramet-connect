@@ -225,9 +225,7 @@ function Delivery() {
       selectedRiders[row.orderId] ??
       availableRiders.find((item) => item.branch === row.branch)?.name;
     if (!rider) {
-      setNotice(
-        "No eligible rider is available for this branch. Check Riders or Attendance first.",
-      );
+      setNotice("No rider is free. Check Riders or Attendance.");
       return;
     }
     try {
@@ -281,12 +279,12 @@ function Delivery() {
 
   const recordCollection = async (row: DeliveryTask) => {
     if (!canCollect) {
-      setNotice("Your role does not have permission to record customer collections.");
+      setNotice("You can't record customer payments.");
       return;
     }
     const obligation = custodyObligationForOrder(state, row.orderRecord);
     if (!obligation) {
-      setNotice("This order has no cash-due custody obligation.");
+      setNotice("Nothing is due on this order.");
       return;
     }
     const draft = draftFor(row);
@@ -312,15 +310,15 @@ function Delivery() {
     const reference = draft.reference.trim().toUpperCase();
     const cashAtCounter = draft.method === "COMPANY_TILL" && paidInCash(draft.paymentMethodId);
     if (draft.method !== "RIDER_CASH" && !cashAtCounter && !reference) {
-      setNotice("Enter the transaction reference, unless the customer paid cash.");
+      setNotice("Enter the payment reference (not needed for cash).");
       return;
     }
     if (draft.method === "COMPANY_TILL" && !draft.paymentMethodId) {
-      setNotice("Configure and choose the company Till or bank payment method first.");
+      setNotice("Choose the till or bank the customer paid into.");
       return;
     }
     if (draft.method !== "COMPANY_TILL" && row.rider === "Unassigned") {
-      setNotice("Assign a restaurant rider before recording rider-held funds.");
+      setNotice("Assign a rider first.");
       return;
     }
 
@@ -478,7 +476,7 @@ function Delivery() {
   return (
     <AppShell
       title="Delivery"
-      subtitle={`Restaurant-rider and platform delivery operations  -  ${branchLabel}`}
+      subtitle={branchLabel}
       actions={
         <>
           <Btn onClick={() => void navigate({ to: "/riders" })}>Rider accountability</Btn>
@@ -515,7 +513,6 @@ function Delivery() {
       <Panel className="mt-4">
         <PanelHead
           title="Delivery tasks"
-          sub="Source and fulfilment are separate: only restaurant-rider orders affect rider workload and custody"
           right={<Status>{availableRiders.length} rider(s) eligible</Status>}
         />
 
@@ -692,8 +689,8 @@ function Delivery() {
 
                 <p className="text-muted-foreground">
                   {row.ridersCarryCash
-                    ? "Money the rider carries is held against the rider until it is handed in. Money paid straight to the restaurant clears the invoice directly."
-                    : "Riders only deliver on this channel. Record what the customer paid and how; it clears the invoice directly."}
+                    ? "Cash the rider carries stays on the rider until handed in."
+                    : "Record what the customer paid and how."}
                 </p>
               </div>
             );
@@ -702,10 +699,7 @@ function Delivery() {
       </Panel>
 
       <Panel className="mt-4">
-        <PanelHead
-          title="Delivery status lifecycle"
-          sub="Declined, failed, returned and cancelled remain exception paths"
-        />
+        <PanelHead title="Delivery status lifecycle" />
         <div className="flex flex-wrap items-center gap-2 px-4 py-4">
           {lifecycle.map((step, index) => (
             <span key={step} className="flex items-center gap-2">
