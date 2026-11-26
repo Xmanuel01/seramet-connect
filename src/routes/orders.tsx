@@ -322,7 +322,7 @@ function Orders() {
                     <Status>{order.status}</Status>
                   </TD>
                   <TD className="text-right text-muted-foreground">
-                    {order.cancellation ? "reason captured" : "immutable"}
+                    {order.cancellation ? "Reason given" : ""}
                   </TD>
                 </tr>
               ))}

@@ -207,10 +207,7 @@ function CrmOverview() {
         </>
       ) : (
         <Panel className="p-5">
-          <CrmEmpty
-            title="CRM metrics unavailable"
-            body="No authoritative dashboard data was returned."
-          />
+          <CrmEmpty title="CRM metrics unavailable" body="No data yet." />
         </Panel>
       )}
     </AppShell>

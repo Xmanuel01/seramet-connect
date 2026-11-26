@@ -371,9 +371,7 @@ function BriefView({
               </div>
               <p className="mt-1 text-[13px] leading-5 text-muted-foreground">
                 {brief.answer?.summary ??
-                  (brief.status === "FAILED"
-                    ? "Generation failed. The durable job can be retried."
-                    : "Generation pending in the durable worker queue.")}
+                  (brief.status === "FAILED" ? "Couldn't finish. Try again." : "Working on it…")}
               </p>
             </div>
             <div className="flex items-start gap-2">
