@@ -220,7 +220,7 @@ function Customers() {
   return (
     <AppShell
       title="Customer 360"
-      subtitle={"Customer profiles, visits, loyalty and service history - " + branchLabel}
+      subtitle={branchLabel}
       actions={
         canManage ? (
           <Btn variant="primary" onClick={() => setShowCreate((value) => !value)}>
@@ -231,19 +231,13 @@ function Customers() {
     >
       {!canView ? (
         <Panel className="p-5">
-          <CrmEmpty
-            title="Customer access unavailable"
-            body="Your role does not permit viewing customer profiles."
-          />
+          <CrmEmpty title="Customer access unavailable" body="You can't view customers." />
         </Panel>
       ) : (
         <>
           {showCreate && canManage && (
             <Panel className="mb-4">
-              <PanelHead
-                title="New customer"
-                sub="The server checks identifier uniqueness. Marketing consent is never assumed."
-              />
+              <PanelHead title="New customer" />
               <form onSubmit={createCustomer} className="grid gap-3 p-4 md:grid-cols-2">
                 <label className="grid gap-1 text-[12px] font-medium">
                   Customer name
@@ -350,7 +344,7 @@ function Customers() {
           )}
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
             <Panel className="min-w-0">
-              <PanelHead title="Customer directory" sub="Customers you have access to" />
+              <PanelHead title="Customer directory" />
               <form onSubmit={search} className="flex flex-wrap gap-2 border-b border-border p-4">
                 <label className="min-w-[200px] flex-1 text-[12px] font-medium">
                   <span className="sr-only">Search customer name, code, phone or email</span>
@@ -445,12 +439,12 @@ function Customers() {
             <Panel className="min-w-0">
               <PanelHead
                 title="Customer profile"
-                sub={selectedId ? "Live customer details" : "Select a customer from the directory"}
+                sub={selectedId ? undefined : "Choose a customer"}
               />
               {!selectedId ? (
                 <CrmEmpty
                   title="Select a customer"
-                  body="Customer orders, loyalty, feedback and contact preferences appear here."
+                  body="Choose a customer to see their details."
                 />
               ) : profile.key !== profileKey || profile.status === "loading" ? (
                 <CrmLoading label="Loading customer profile" />
@@ -494,8 +488,7 @@ function Customers() {
                   </div>
                   {isAllBranches && (
                     <p className="text-[12px] text-muted-foreground">
-                      Cross-branch spend totals are withheld here until their currencies are
-                      verified.
+                      Spend across branches isn&apos;t totalled here.
                     </p>
                   )}
                   <section>

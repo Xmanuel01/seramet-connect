@@ -349,7 +349,6 @@ function BriefView({
     <Panel>
       <PanelHead
         title={title}
-        sub="Durable, evidence-grounded generation"
         right={
           canGenerate ? (
             <Btn variant="primary" onClick={() => onGenerate(type)} disabled={loading}>
@@ -400,7 +399,7 @@ function HistoryView({
 }) {
   return (
     <Panel>
-      <PanelHead title="Analysis history" sub="Current user only" />
+      <PanelHead title="Analysis history" />
       <div className="divide-y divide-border">
         {sessions.map((session) => (
           <div
@@ -540,10 +539,7 @@ function ProviderSettings({
   };
   return (
     <Panel>
-      <PanelHead
-        title="Provider configuration"
-        sub="Connection details are stored securely and never shown"
-      />
+      <PanelHead title="Provider configuration" />
       <form onSubmit={submit} className="grid gap-4 p-4">
         <label className="flex items-center gap-2 text-[12px] font-semibold">
           <input

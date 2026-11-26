@@ -103,9 +103,7 @@ function Vouchers() {
         refundPolicy: "KEEP_REDEMPTION",
       });
       setCreateOpen(false);
-      setNotice(
-        "Voucher definition created. Checkout will recalculate all eligibility and limits on the server.",
-      );
+      setNotice("Voucher created.");
       await vouchers.refresh();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Voucher could not be created");
@@ -123,7 +121,7 @@ function Vouchers() {
         { voucherDefinitionId: issueVoucherId, sourceType: "OPERATOR_ISSUE" },
       );
       setNotice(
-        `Voucher issued. Secure code: ${response.issue.code}. This is the only time the full code is shown.`,
+        `Voucher issued. Code: ${response.issue.code}. Write it down now; it isn't shown again.`,
       );
       setIssueOpen(false);
       await vouchers.refresh();
@@ -137,7 +135,7 @@ function Vouchers() {
   return (
     <AppShell
       title="Vouchers"
-      subtitle={`Promotional value with server-enforced scope, caps and replay protection - ${branchLabel}`}
+      subtitle={branchLabel}
       actions={
         <>
           <Btn onClick={() => setIssueOpen(true)}>Issue voucher</Btn>
@@ -170,15 +168,9 @@ function Vouchers() {
             <Metric label="Redeemed" value={redeemed} />
           </div>
           <Panel className="mt-4">
-            <PanelHead
-              title="Voucher register"
-              sub="Vouchers reduce sale value; they are not stored cash or gift-card liability"
-            />
+            <PanelHead title="Voucher register" />
             {!rows.length ? (
-              <CrmEmpty
-                title="No vouchers"
-                body="Create a promotion with explicit branch, cap and stacking rules."
-              />
+              <CrmEmpty title="No vouchers" body="Create a voucher to get started." />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full">
@@ -242,10 +234,8 @@ function Vouchers() {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-[620px] border-border bg-card">
           <DialogHeader>
-            <DialogTitle>New voucher definition</DialogTitle>
-            <DialogDescription>
-              Configure scope and limits. The server remains authoritative at checkout.
-            </DialogDescription>
+            <DialogTitle>New voucher</DialogTitle>
+            <DialogDescription>Set where it works and its limits.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -338,7 +328,7 @@ function Vouchers() {
                   setForm((current) => ({ ...current, customerSpecific: event.target.checked }))
                 }
               />
-              Customer-specific, strong single-use code
+              One customer, single use
             </label>
             <div className="flex justify-end gap-2 border-t border-border pt-3">
               <Btn onClick={() => setCreateOpen(false)}>Cancel</Btn>
@@ -353,9 +343,7 @@ function Vouchers() {
         <DialogContent className="max-w-[480px] border-border bg-card">
           <DialogHeader>
             <DialogTitle>Issue voucher</DialogTitle>
-            <DialogDescription>
-              A cryptographically strong code is generated and shown once.
-            </DialogDescription>
+            <DialogDescription>The code is shown once.</DialogDescription>
           </DialogHeader>
           <Select
             label="Voucher definition"

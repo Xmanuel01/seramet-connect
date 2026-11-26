@@ -88,7 +88,7 @@ function CrmOverview() {
   return (
     <AppShell
       title="CRM overview"
-      subtitle={"Customer growth and service activity - " + branchLabel}
+      subtitle={branchLabel}
       actions={
         <button
           type="button"
@@ -133,7 +133,7 @@ function CrmOverview() {
           </div>
           <div className="mt-4 grid gap-4 xl:grid-cols-2">
             <Panel>
-              <PanelHead title="Customer engagement" sub="Server-calculated CRM activity" />
+              <PanelHead title="Customer engagement" />
               <div className="space-y-3 p-4 text-[13px]">
                 <div className="flex items-center justify-between">
                   <span>Linked completed orders</span>
@@ -156,7 +156,7 @@ function CrmOverview() {
               </div>
             </Panel>
             <Panel>
-              <PanelHead title="Loyalty and service" sub="Recent customer activity" />
+              <PanelHead title="Loyalty and service" />
               <div className="space-y-3 p-4 text-[13px]">
                 <div className="flex items-center justify-between">
                   <span>Points issued</span>
@@ -182,10 +182,7 @@ function CrmOverview() {
             </Panel>
           </div>
           <Panel className="mt-4">
-            <PanelHead
-              title="Customer workflows"
-              sub="Open the existing customer directory or related CRM modules"
-            />
+            <PanelHead title="Customer workflows" />
             <div className="flex flex-wrap gap-2 p-4 text-[13px]">
               <Link
                 className="rounded-md border border-border px-3 py-2 font-semibold hover:bg-secondary"

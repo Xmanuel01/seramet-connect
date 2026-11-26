@@ -815,10 +815,7 @@ function Settings() {
 
           {current.label === "POS and restaurant" && (
             <Panel>
-              <PanelHead
-                title="Order channels"
-                sub="POS source options are sorted from these tenant records"
-              />
+              <PanelHead title="Order channels" />
               <div className="grid gap-3 p-4 md:grid-cols-5">
                 <ConfigField
                   label="Display name"
@@ -990,10 +987,7 @@ function Settings() {
 
           {current.label === "Finance" && (
             <Panel>
-              <PanelHead
-                title="Payment methods"
-                sub="Arbitrary payment methods appear in POS without source changes"
-              />
+              <PanelHead title="Payment methods" />
               <div className="grid gap-3 p-4 md:grid-cols-4">
                 <ConfigField
                   label="Display name"

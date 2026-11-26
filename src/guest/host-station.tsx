@@ -191,7 +191,7 @@ export function HostStation({ view: pathname }: { view: (typeof views)[number]["
   return (
     <AppShell
       title="Front of House"
-      subtitle={`Tables, reservations, seating, waiting list and guest requests - ${branchLabel}`}
+      subtitle={branchLabel}
       actions={
         <Btn onClick={() => void query.refresh()} disabled={query.status === "loading"}>
           <RefreshCcw className="h-4 w-4" /> Refresh
@@ -280,7 +280,6 @@ export function HostStation({ view: pathname }: { view: (typeof views)[number]["
         <Panel className="mt-4">
           <PanelHead
             title="Reservations & arrivals"
-            sub="Confirm bookings, track arrivals and manage reservation status"
             right={
               <input
                 type="date"
@@ -379,7 +378,7 @@ export function HostStation({ view: pathname }: { view: (typeof views)[number]["
           </Panel>
           {canSeat && (
             <Panel>
-              <PanelHead title="Seat walk-in" sub="Opens an existing guest table session" />
+              <PanelHead title="Seat walk-in" />
               <div className="grid gap-3 p-4">
                 <label className="text-[12px] font-semibold">
                   Guest name
@@ -449,7 +448,7 @@ export function HostStation({ view: pathname }: { view: (typeof views)[number]["
 
       {currentView?.to === "/waitlist" && (
         <Panel className="mt-4">
-          <PanelHead title="Waitlist" sub="Notify guests and assign a suitable available table" />
+          <PanelHead title="Waitlist" />
           <div className="divide-y divide-border">
             {data?.waitlist.map((row) => (
               <div key={row.id} className="grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_160px_auto]">
@@ -507,7 +506,7 @@ export function HostStation({ view: pathname }: { view: (typeof views)[number]["
 
       {currentView?.to === "/guest-service" && (
         <Panel className="mt-4">
-          <PanelHead title="Guest requests" sub="Acknowledge and complete table service requests" />
+          <PanelHead title="Guest requests" />
           <div className="divide-y divide-border">
             {data?.serviceRequests.map((row) => (
               <div key={row.id} className="flex flex-wrap items-center justify-between gap-3 p-4">

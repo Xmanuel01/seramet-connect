@@ -499,7 +499,6 @@ function Employees() {
   return (
     <AppShell
       title="Employees"
-      subtitle="Staff, their roles and the branches they work at"
       actions={
         <Btn
           variant="primary"
@@ -780,7 +779,6 @@ function Employees() {
       <Panel className="mt-4 overflow-x-auto">
         <PanelHead
           title="Employee register"
-          sub="Everyone who works in this branch"
           right={
             <div className="flex items-center gap-2">
               {former.length ? (

@@ -58,8 +58,8 @@ function PrivacyRequests() {
       setForm({ customerId: "", requestType: "ACCESS", requestReference: "" });
       setNotice(
         ["ACCESS", "EXPORT"].includes(form.requestType)
-          ? "Privacy export queued through the durable worker."
-          : "Privacy request recorded for authorized review.",
+          ? "Export is being prepared."
+          : "Request saved for review.",
       );
       await requests.refresh();
     } catch (error) {
@@ -75,9 +75,7 @@ function PrivacyRequests() {
         requestId,
         reason: "Verified privacy request approved by authorized operator",
       });
-      setNotice(
-        "Customer identifiers anonymized while financial records and references were preserved.",
-      );
+      setNotice("Customer details removed. Sales records are kept.");
       await requests.refresh();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Anonymization could not be completed");
@@ -89,7 +87,7 @@ function PrivacyRequests() {
   return (
     <AppShell
       title="Privacy requests"
-      subtitle={`Authorized access, export, correction and anonymization workflow - ${branchLabel}`}
+      subtitle={branchLabel}
       actions={
         <Btn variant="primary" onClick={() => setCreateOpen(true)}>
           New request
@@ -125,15 +123,9 @@ function PrivacyRequests() {
             />
           </div>
           <Panel className="mt-4">
-            <PanelHead
-              title="Privacy request register"
-              sub="Financial records remain intact; direct identifiers are minimized or anonymized where permitted"
-            />
+            <PanelHead title="Privacy request register" />
             {!rows.length ? (
-              <CrmEmpty
-                title="No privacy requests"
-                body="Authorized customer privacy requests will appear here."
-              />
+              <CrmEmpty title="No privacy requests" body="No privacy requests yet." />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full">
@@ -195,10 +187,7 @@ function PrivacyRequests() {
         <DialogContent className="max-w-[540px] border-border bg-card">
           <DialogHeader>
             <DialogTitle>New privacy request</DialogTitle>
-            <DialogDescription>
-              Only authorized staff may create and process requests. Verify the customer before
-              submission.
-            </DialogDescription>
+            <DialogDescription>Check who the customer is first.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3">
             <Select
@@ -240,7 +229,7 @@ function PrivacyRequests() {
               />
             </label>
             <div className="rounded-md bg-warning-soft px-3 py-2 text-[12px] text-warning">
-              Do not place identity documents or raw sensitive data in the reference field.
+              Don&apos;t put ID numbers or private details in the reference.
             </div>
             <div className="flex justify-end gap-2 border-t border-border pt-3">
               <Btn onClick={() => setCreateOpen(false)}>Cancel</Btn>

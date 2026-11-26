@@ -113,7 +113,7 @@ function Feedback() {
   return (
     <AppShell
       title="Customer feedback"
-      subtitle={`NPS, CSAT and service recovery queue - ${branchLabel}`}
+      subtitle={branchLabel}
       actions={
         <Btn variant="primary" onClick={() => setCreateOpen(true)}>
           Record feedback
