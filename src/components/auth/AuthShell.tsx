@@ -9,7 +9,7 @@ export function AuthShell({
   footer,
 }: {
   title: string;
-  subtitle: string;
+  subtitle?: string;
   children: ReactNode;
   footer: ReactNode;
 }) {
@@ -21,7 +21,7 @@ export function AuthShell({
         </Link>
         <section className="rounded-xl border border-border bg-card p-5 shadow-card sm:p-6">
           <h1 className="text-xl font-bold tracking-tight">{title}</h1>
-          <p className="mt-1.5 text-sm leading-6 text-muted-foreground">{subtitle}</p>
+          {subtitle && <p className="mt-1.5 text-sm leading-6 text-muted-foreground">{subtitle}</p>}
           <div className="mt-6">{children}</div>
         </section>
         <div className="mt-5 text-center text-sm text-muted-foreground">{footer}</div>

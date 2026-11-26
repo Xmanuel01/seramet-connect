@@ -181,11 +181,7 @@ function RegisterPage() {
 
   if (stage === "CHECKING") {
     return (
-      <AuthShell
-        title="Checking your account"
-        subtitle="Checking your secure session..."
-        footer={<span />}
-      >
+      <AuthShell title="Checking your account" subtitle="One moment..." footer={<span />}>
         <div className="flex justify-center py-8">
           <Loader2 className="h-5 w-5 animate-spin text-primary" />
         </div>
@@ -221,17 +217,13 @@ function RegisterPage() {
     return (
       <AuthShell
         title="Verify your email"
-        subtitle="After confirming your email, sign in to continue creating your restaurant."
+        subtitle="Confirm your email, then sign in."
         footer={
           <a href="/login?account=1" className="font-semibold text-primary">
             Return to sign in
           </a>
         }
       >
-        <div className="rounded-md border border-border bg-secondary/50 px-4 py-3 text-sm">
-          Email verification does not automatically sign you in. No restaurant or operational
-          records are created until you are authenticated.
-        </div>
         <button
           className={`${authButtonClass} mt-4`}
           type="button"
@@ -245,11 +237,7 @@ function RegisterPage() {
 
   if (stage === "CHOOSE_RESTAURANT") {
     return (
-      <AuthShell
-        title="Choose your restaurant"
-        subtitle="Select an existing restaurant to continue."
-        footer={<span />}
-      >
+      <AuthShell title="Choose your restaurant" subtitle="Choose a restaurant." footer={<span />}>
         <div className="space-y-2">
           {restaurants.map((restaurant) => (
             <button
@@ -270,9 +258,7 @@ function RegisterPage() {
     <AuthShell
       title={stage === "ACCOUNT" ? "Create your account" : "What is your business name?"}
       subtitle={
-        stage === "ACCOUNT"
-          ? "Start with a verified administrator account."
-          : "Start with your restaurant identity. Location and operations come next."
+        stage === "ACCOUNT" ? "You'll be the owner." : "Location and opening hours come next."
       }
       footer={
         <>
@@ -329,10 +315,6 @@ function RegisterPage() {
           </>
         ) : (
           <>
-            <div className="rounded-md border border-primary/25 bg-accent px-4 py-3 text-sm leading-6 text-foreground">
-              You will be created as the Account Owner with access to all branches. You can invite
-              managers and employees after the restaurant has been created.
-            </div>
             <label className="block text-sm font-medium">
               Restaurant name
               <input
@@ -363,8 +345,7 @@ function RegisterPage() {
                 id="public-url-help"
                 className="mt-1.5 block text-xs font-normal leading-5 text-muted-foreground"
               >
-                Used for your public menu, ordering and booking link, for example
-                /guest/your-restaurant. Leave blank and Seramet creates it from the restaurant name.
+                Your online menu link. Leave blank to use the restaurant name.
               </span>
             </label>
           </>

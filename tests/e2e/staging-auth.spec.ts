@@ -115,7 +115,7 @@ test.describe("protected staging authentication", () => {
     await expect(deviceRow).toBeVisible();
     await deviceRow.getByRole("button", { name: "Activate" }).click();
     await expect(
-      page.getByText("This browser is now securely activated for employee POS sign-in."),
+      page.getByText("This browser is ready for staff PIN sign-in."),
     ).toBeVisible();
 
     await signOut(page);
