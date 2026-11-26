@@ -313,10 +313,7 @@ function SupplierList() {
                 <Metric label="Purchase orders" value={Number(selected.order_count)} />
               </div>
 
-              <PanelHead
-                title="Supplier items"
-                sub="Supplier SKU, purchase unit, contract price and minimum order terms"
-              />
+              <PanelHead title="Supplier items" />
               {!selectedItems.length ? (
                 <div className="p-8 text-center text-[12px] text-muted-foreground">
                   No inventory items are linked to this supplier yet.

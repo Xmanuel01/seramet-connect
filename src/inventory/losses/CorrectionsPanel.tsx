@@ -190,10 +190,7 @@ function AdjustmentForm({
 
   return (
     <Panel className="mb-4">
-      <PanelHead
-        title="Request stock adjustment"
-        sub="Use a signed quantity: positive adds stock, negative reduces stock"
-      />
+      <PanelHead title="Request stock adjustment" sub="Positive adds stock, negative removes it" />
       <div className="grid gap-3 p-4 md:grid-cols-3">
         <Field label="Branch">
           <select

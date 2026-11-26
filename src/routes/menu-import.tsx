@@ -818,7 +818,7 @@ function MenuImport() {
       <Panel className={cn("mt-4", section !== "Past sales" && "hidden")}>
         <PanelHead
           title="Past sales from your old POS"
-          sub="Optional and done once. Past sales appear in reports only; stock and accounts are not changed."
+          sub="Optional. Past sales show in reports only."
           right={<History className="h-4 w-4 text-primary" />}
         />
         <div className="grid gap-4 p-4 lg:grid-cols-[320px_minmax(0,1fr)]">

@@ -157,7 +157,7 @@ function Production() {
       <Panel className="mt-4">
         <PanelHead
           title="Production runs"
-          sub="Raw materials post only when a batch is completed; planned and started runs do not move stock."
+          sub="Stock moves only when a batch is completed"
           right={<Factory className="h-4 w-4 text-primary" />}
         />
         <DataTable

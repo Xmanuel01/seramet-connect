@@ -558,10 +558,7 @@ function AuthoritativeRecipeView({ rows }: { rows: Array<Record<string, unknown>
 function AuthoritativeVarianceView({ rows }: { rows: Array<Record<string, unknown>> }) {
   return (
     <Panel className="overflow-hidden shadow-none">
-      <PanelHead
-        title="Actual vs theoretical"
-        sub="Posted inventory consumption with explained and unexplained variance"
-      />
+      <PanelHead title="Actual vs theoretical" />
       <DataTable
         cols={[
           "Material",
@@ -612,10 +609,7 @@ function PrepPlanView({
 }) {
   return (
     <Panel className="overflow-hidden shadow-none">
-      <PanelHead
-        title="Daily prep plan"
-        sub="Demand, prepared inventory and configured safety buffer"
-      />
+      <PanelHead title="Daily prep plan" />
       <DataTable
         cols={[
           "Prep item",
@@ -653,7 +647,7 @@ function PrepPlanView({
       {!rows.length && (
         <div className="px-4 py-8 text-center text-[12px] text-muted-foreground">
           {authoritative
-            ? "No prep recommendation is available. Configure production recipes and complete a sales period first."
+            ? "Prep suggestions appear here once there are sales and recipes."
             : "Prep suggestions appear here once there are sales and recipes."}
         </div>
       )}
@@ -703,7 +697,6 @@ function RawMaterialsView({ materials, onAdd }: { materials: Material[]; onAdd: 
       <Panel className="overflow-hidden shadow-none">
         <PanelHead
           title="Raw materials"
-          sub="Cost, yield, storage split and reorder status"
           right={
             <Btn onClick={onAdd}>
               <PackagePlus className="h-4 w-4" /> New item
@@ -837,10 +830,7 @@ function RecipeBomView({
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
       <Panel className="overflow-hidden shadow-none">
-        <PanelHead
-          title="Recipe costing"
-          sub="Calculated from raw material edible cost and recipe quantities"
-        />
+        <PanelHead title="Recipe costing" />
         <DataTable
           cols={[
             "Dish",
@@ -952,7 +942,6 @@ function StockEntriesView({
     <Panel className="overflow-hidden shadow-none">
       <PanelHead
         title="Stock entries"
-        sub="Receipts, kitchen issues, wastage and returns that affect actual cost"
         right={
           <Btn onClick={onAdd}>
             <Plus className="h-4 w-4" /> Post entry
@@ -997,10 +986,7 @@ function VarianceView({ rows }: { rows: ReturnType<typeof recipeSummary>[] }) {
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
       <Panel className="overflow-hidden shadow-none">
-        <PanelHead
-          title="Actual vs theoretical"
-          sub="Compares recipe standard cost against stock actually issued"
-        />
+        <PanelHead title="Actual vs theoretical" />
         <DataTable
           cols={[
             "Dish",
@@ -1036,18 +1022,9 @@ function VarianceView({ rows }: { rows: ReturnType<typeof recipeSummary>[] }) {
         <PanelHead title="When costs run high" sub="What to check first" />
         <div className="space-y-3 p-4 text-[12px]">
           {[
-            [
-              "Portion control",
-              "Check portion tools and trim standards when actual issue exceeds the configured recipe tolerance.",
-            ],
-            [
-              "Yield loss",
-              "Review supplier quality when edible yield drops below the expected butcher/prep percentage.",
-            ],
-            [
-              "Waste recording",
-              "Capture spoilage, staff meals, remakes and cancelled KOT items before end-of-day close.",
-            ],
+            ["Portion control", "Check portion sizes and trimming."],
+            ["Yield loss", "Check supplier quality when less of each item is usable."],
+            ["Waste recording", "Record spoilage, staff meals and remakes before closing the day."],
           ].map(([title, body]) => (
             <div key={title} className="rounded-lg border border-border bg-secondary/40 p-3">
               <div className="font-semibold">{title}</div>

@@ -351,7 +351,7 @@ function CreateItemPanel({
 
   return (
     <Panel className="mb-4">
-      <PanelHead title="Add inventory item" sub="Items you buy and keep in stock" />
+      <PanelHead title="Add inventory item" />
       <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
         <Field label="Item name">
           <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} />

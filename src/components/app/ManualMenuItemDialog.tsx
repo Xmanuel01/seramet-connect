@@ -106,11 +106,9 @@ export function ManualMenuItemDialog({
     setError("");
     setNotice("");
     try {
-      if (!selectedBranchId) throw new Error("Choose a branch before adding a sellable item.");
+      if (!selectedBranchId) throw new Error("Choose a branch first.");
       if (!stationCode && !counterOnly) {
-        throw new Error(
-          "Select the kitchen/bar station, or explicitly confirm this is a counter-only item.",
-        );
+        throw new Error("Choose the kitchen or bar station, or tick served from the counter.");
       }
       createManualMenuCsv({
         code,
@@ -129,9 +127,9 @@ export function ManualMenuItemDialog({
         serviceChargeApplicable,
       });
       setPreviewRevision(draftRevision);
-      setNotice("Local format checks passed. The server will authorize and validate the save.");
+      setNotice("Looks good. Save to add it.");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Manual item could not be validated");
+      setError(cause instanceof Error ? cause.message : "Item could not be checked");
     } finally {
       setBusy(false);
     }
@@ -303,16 +301,12 @@ export function ManualMenuItemDialog({
                 onChange={(event) => edit(() => setCounterOnly(event.target.checked))}
                 className="mt-0.5 h-4 w-4 accent-primary"
               />
-              <span>
-                Counter-only item: I confirm no kitchen or bar KOT is required. Items needing
-                preparation must be linked to a station before saving.
-              </span>
+              <span>Served from the counter (no kitchen or bar ticket)</span>
             </label>
           )}
           {selectedBranchId && availableStations.length === 0 && (
             <p className="rounded-md border border-warning/30 p-3 text-[12px] text-warning">
-              No kitchen/bar station is configured for this branch. Create it in Setup before
-              activating an item that needs kitchen routing.
+              This branch has no kitchen or bar station yet. Add one in Setup Centre first.
             </p>
           )}
           <details
@@ -323,10 +317,6 @@ export function ManualMenuItemDialog({
             <summary className="cursor-pointer text-[13px] font-semibold">
               More item details (optional)
             </summary>
-            <p className="mt-2 text-[11px] text-muted-foreground">
-              Only enter values already configured for your business. Unrecognized unit or recipe
-              codes must be resolved before they can be used.
-            </p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <label className="grid gap-1 text-[12px] font-semibold">
                 Branch-specific selling price
@@ -407,12 +397,9 @@ export function ManualMenuItemDialog({
           {previewRevision === draftRevision && previewRevision >= 0 && (
             <div className="rounded-md border border-border bg-secondary/40 p-3 text-[12px]">
               <div className="flex items-center justify-between">
-                <strong>Ready for server validation</strong>
+                <strong>Ready to save</strong>
                 <SetupStatus value="READY" />
               </div>
-              <p>
-                The authoritative server will enforce branch, station, category and duplicate rules.
-              </p>
             </div>
           )}
           {notice && (

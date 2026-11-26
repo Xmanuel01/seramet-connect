@@ -191,10 +191,7 @@ function WastageForm({
 
   return (
     <Panel className="mb-4">
-      <PanelHead
-        title="Log wastage"
-        sub="Capture the incident first; approval performs the stock deduction"
-      />
+      <PanelHead title="Log wastage" />
       <div className="grid gap-3 p-4 md:grid-cols-3">
         <Field label="Branch">
           <select

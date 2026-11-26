@@ -88,10 +88,7 @@ export function BreakagesPanel() {
       </div>
 
       <Panel className="mt-4">
-        <PanelHead
-          title="Breakage register"
-          sub="Breakage approval is audited but does not falsely reduce food inventory"
-        />
+        <PanelHead title="Breakage register" />
         <DataTable
           cols={[
             "Item",
@@ -187,10 +184,7 @@ function BreakageForm({
 
   return (
     <Panel className="mb-4">
-      <PanelHead
-        title="Record breakage"
-        sub="For equipment, service items and smallwares; no inventory movement is created"
-      />
+      <PanelHead title="Record breakage" sub="Plates, glasses and equipment" />
       <div className="grid gap-3 p-4 md:grid-cols-3">
         <Field label="Branch">
           <select

@@ -151,7 +151,7 @@ function Categories() {
       </div>
 
       <Panel className="mt-4">
-        <PanelHead title="Category table" sub="Stock value and low stock by category" />
+        <PanelHead title="Category table" />
         <EnterpriseTable
           rows={rows}
           columns={columns}
