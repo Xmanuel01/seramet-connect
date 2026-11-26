@@ -1109,7 +1109,7 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     await closingDialog.getByRole("button", { name: "Review confirmation", exact: true }).click();
     await closingDialog.getByRole("button", { name: "Confirm & End Shift", exact: true }).click();
     await expect(closingDialog).not.toBeVisible();
-    await expect(manager.getByRole("status")).toContainText("Cashier shift closed.");
+    await expect(manager.getByRole("status")).toContainText("Shift closed.");
     state = (await snapshot()).state;
     expect(
       state.paymentOperations.drawerSessions.find((row: { id: string }) => row.id === drawer.id)

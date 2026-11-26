@@ -341,9 +341,7 @@ test("employee clock-in enforces GPS, supervisor config and immutable server tim
   await page.getByRole("button", { name: "Check / retry request" }).click();
   await expect(page.getByRole("button", { name: "Clock out", exact: true })).toBeEnabled();
   expect(committed).toBe(1);
-  await expect(
-    page.getByText("Your last clock-in or out was saved."),
-  ).toBeVisible();
+  await expect(page.getByText("Your last clock-in or out was saved.")).toBeVisible();
   await context.close();
 });
 
