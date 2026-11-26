@@ -444,7 +444,6 @@ export function PrinterAdministration() {
     <Panel className="mb-4">
       <PanelHead
         title="Your printers"
-        sub="Add the printers for this branch and choose what each one prints."
         right={
           <div className="flex gap-2">
             <Btn
@@ -543,8 +542,8 @@ export function PrinterAdministration() {
             )}
             {updateAvailable && (
               <p className="text-muted-foreground">
-                A newer version of the print bridge is available. Download it and open it: it
-                updates in place and stays connected. Then choose Check again.
+                A new version of the print app is ready. Download and open it, then choose Check
+                again.
               </p>
             )}
           </section>
@@ -915,8 +914,7 @@ export function PrinterAdministration() {
                     />
                   </label>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    The computer that sends jobs to this printer. Filled in for you when you set up
-                    a printer found on this computer.
+                    The computer this printer is connected to.
                   </p>
                 </div>
                 <div>
@@ -1000,9 +998,7 @@ export function PrinterAdministration() {
                 </label>
                 {draft.renderingMode === "RASTER_ESC_POS" && draft.raster && (
                   <details className="sm:col-span-2">
-                    <summary className="cursor-pointer">
-                      Image print settings (for technicians)
-                    </summary>
+                    <summary className="cursor-pointer">Advanced print settings</summary>
                     <div className="grid gap-3 py-3 sm:grid-cols-2">
                       <label>
                         Raster command
@@ -1204,8 +1200,7 @@ export function PrinterAdministration() {
           <DialogHeader>
             <DialogTitle>Delete {deleting?.name}?</DialogTitle>
             <DialogDescription>
-              It stops receiving bills, receipts and kitchen tickets and is removed from this list.
-              Past print history is kept. To use it again, add it as a new printer.
+              It stops printing and is removed from this list. Past prints are kept.
             </DialogDescription>
           </DialogHeader>
           <div className="flex justify-end gap-2">

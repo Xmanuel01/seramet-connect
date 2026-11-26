@@ -139,7 +139,7 @@ export function ReceiptLogoPanel({ businessName }: { businessName: string }) {
     <Panel className="mb-4">
       <PanelHead
         title="Receipt logo"
-        sub="Prints at the top of bills, receipts and invoices. A branch logo replaces the company logo in that branch."
+        sub="Prints on bills, receipts and invoices"
         right={<ImageIcon className="h-4 w-4 text-primary" />}
       />
       <div className="grid gap-4 p-4 text-[13px] lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">

@@ -499,7 +499,7 @@ function SerametPrinters() {
         <Panel className="mb-4">
           <PanelHead
             title="Kitchen tickets to check"
-            sub="These tickets may not have printed. Check the kitchen printer before printing again, so the kitchen doesn't make an order twice."
+            sub="Check the printer before printing again, so the kitchen doesn't make an order twice."
             right={<Status>{recoveryItems.length} to check</Status>}
           />
           <div className="space-y-3 p-4 text-[13px]">
@@ -570,8 +570,7 @@ function SerametPrinters() {
                   Recently sent kitchen tickets ({recentlyAccepted.length})
                 </summary>
                 <p className="mt-2 text-muted-foreground">
-                  These reached the printer. If one didn't come out, a manager can approve a
-                  reprint.
+                  If one didn&apos;t come out, a manager can allow a reprint.
                 </p>
                 <div className="mt-2 space-y-2">
                   {recentlyAccepted.map((obligation) => (
@@ -608,7 +607,6 @@ function SerametPrinters() {
       <Panel className="mb-4">
         <PanelHead
           title="What prints where"
-          sub="Each document and the printer it prints on."
           right={<KitchenModeChooser current={profile.kitchenMode} />}
         />
         <div className="overflow-x-auto">
@@ -711,7 +709,7 @@ function SerametPrinters() {
 
       <details className="rounded-lg border border-border bg-card">
         <summary className="cursor-pointer px-4 py-3 text-[13px] font-semibold">
-          Printer status and reprint history (for technicians)
+          Printer status and reprints
         </summary>
         <div className="space-y-4 border-t border-border p-4 text-[13px]">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -786,12 +784,7 @@ function SerametPrinters() {
           <section>
             <h3 className="font-semibold">Reprints this session ({reprints.length})</h3>
             <div className="mt-2 max-h-[320px] space-y-2 overflow-y-auto">
-              {reprints.length === 0 && (
-                <p className="text-muted-foreground">
-                  Reprinted receipts, bills, invoices and kitchen tickets appear here with who
-                  reprinted them and why.
-                </p>
-              )}
+              {reprints.length === 0 && <p className="text-muted-foreground">No reprints yet.</p>}
               {reprints.map((entry) => (
                 <article
                   key={entry.id}
