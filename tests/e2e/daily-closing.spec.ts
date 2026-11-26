@@ -81,7 +81,7 @@ test("supervisor confirms one combined close, downloads the snapshot and retains
   await close.click();
   await dialog.getByLabel(`Counted KES ${opened}`).fill("100.00");
   await dialog.getByRole("button", { name: "Review confirmation", exact: true }).click();
-  await expect(dialog.getByText(/snapshot will be immutable/)).toBeVisible();
+  await expect(dialog.getByText(/this day can.t be changed/)).toBeVisible();
   await mkdir(resolve(".seramet/daily-closing"), { recursive: true });
   await page.screenshot({
     path: resolve(".seramet/daily-closing/confirmation-desktop.png"),
