@@ -593,7 +593,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
   const current = data?.me;
   return (
     <AppShell
-      title={scheduling ? "Attendance" : "Clock In/Out"}
+      title={scheduling ? "Team Timecards" : "Clock In/Out"}
       subtitle={branchLabel}
       actions={
         <Btn onClick={() => void refresh()} disabled={busy}>

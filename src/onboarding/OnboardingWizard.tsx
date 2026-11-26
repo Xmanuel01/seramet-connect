@@ -18,6 +18,8 @@ import {
 } from "@/onboarding/onboarding-steps";
 import type { useSetupCentre } from "@/onboarding/use-setup-centre";
 import { staffRolePresets } from "@/platform/staff-role-presets";
+import { kitchenModeLabels } from "@/lib/printer-labels";
+import type { KitchenOperatingMode } from "@/lib/seramet-print-service";
 
 type Centre = ReturnType<typeof useSetupCentre>;
 type Hours = Record<string, { open: string; close: string; closed: boolean }>;
@@ -115,6 +117,12 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
   const [paymentCodes, setPaymentCodes] = useState<string[]>([]);
   const [stationCodes, setStationCodes] = useState<string[]>([]);
   const [customStations, setCustomStations] = useState<StationPreset[]>([]);
+  // Tills can't send orders to the kitchen until the branch chooses this.
+  const savedKitchenMode = platformState.branches.find((item) => item.id === onboardingBranchId)
+    ?.metadata["kitchenMode"] as KitchenOperatingMode | undefined;
+  const [kitchenMode, setKitchenMode] = useState<KitchenOperatingMode>(
+    savedKitchenMode ?? "KDS_ONLY",
+  );
   const [customStation, setCustomStation] = useState({ name: "", stationType: "KITCHEN" });
   const [menuItem, setMenuItem] = useState({ name: "", category: "", price: "", station: "" });
   const [team, setTeam] = useState<TeamMember[]>([]);
@@ -351,7 +359,13 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
             ...station,
           });
         }
+        await centre.send(
+          "/api/seramet/printing/kitchen-mode",
+          { branchId: onboardingBranchId, kitchenMode },
+          "PUT",
+        );
         await centre.refreshOptions();
+        await refreshConfiguration();
         return {};
       case "menu":
         return { later: centre.menuCatalog.length === 0 };
@@ -400,6 +414,10 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
         basePrice: menuItem.price.trim(),
         currency: baseCurrency,
         ...(menuItem.station ? { stationCode: menuItem.station } : {}),
+        // Items carry the VAT and service charge chosen in the tax step, so the till,
+        // invoices and receipts show them.
+        ...(vatRule && isActive(vatRule) ? { taxCode: text(vatRule["id"]) } : {}),
+        serviceChargeApplicable: Boolean(serviceRule && isActive(serviceRule)),
       });
       setMenuItem({ ...menuItem, name: "", price: "" });
     });
@@ -925,6 +943,31 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
                 {station.stationType.toLowerCase()})
               </div>
             ))}
+            <label className={labelClass}>
+              How do orders reach the kitchen?
+              <select
+                className={fieldClass}
+                value={kitchenMode}
+                onChange={(event) => setKitchenMode(event.target.value as KitchenOperatingMode)}
+              >
+                {(
+                  [
+                    "KDS_ONLY",
+                    "KDS_AND_PRINTER",
+                    "PRINTER_ONLY",
+                    "NO_DEDICATED_KITCHEN_SYSTEM",
+                  ] as const
+                ).map((mode) => (
+                  <option key={mode} value={mode}>
+                    {kitchenModeLabels[mode]}
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs font-normal text-muted-foreground">
+                Kitchen screens work on any tablet or computer. Printers need the Seramet Print
+                Bridge; add them on the Printers page after setup.
+              </span>
+            </label>
             <div className="grid gap-2 sm:grid-cols-[1fr_160px_auto]">
               <input
                 className={fieldClass}
@@ -1389,6 +1432,10 @@ function stringArray(value: unknown) {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
     : [];
+}
+
+function isActive(row: Record<string, unknown>) {
+  return Number(row["active"]) === 1 || row["active"] === true;
 }
 
 function text(value: unknown) {

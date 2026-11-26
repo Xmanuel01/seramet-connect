@@ -250,6 +250,7 @@ function POS() {
   const [deliveryPhone, setDeliveryPhone] = useState("");
   const [doorNumber, setDoorNumber] = useState("");
   const [deliveryCharge, setDeliveryCharge] = useState<DeliveryCharge>();
+  const deliveryAmountInput = useRef<HTMLInputElement>(null);
   // A delivery-app order typed in by hand: the app's number and any part due on delivery.
   const [appOrderNumber, setAppOrderNumber] = useState("");
   const [dueOnDelivery, setDueOnDelivery] = useState("");
@@ -449,10 +450,11 @@ function POS() {
       const baseline = orderBaseline.current;
       if (!baseline)
         throw new Error("Wait for the selected order to finish loading before saving.");
+      // A draft older than the saved order pins the revision it was based on, so the save is
+      // refused. An up-to-date draft leaves it unpinned: a change elsewhere in the restaurant
+      // then doesn't block it (the engine resends when this order is unchanged).
       expectedRevision =
-        (await digestOrder(activeOrder)) === baseline.digest
-          ? transactionRevision
-          : baseline.revision;
+        (await digestOrder(activeOrder)) === baseline.digest ? undefined : baseline.revision;
     }
     const result = await mutateBackendTransaction(
       action,
@@ -760,11 +762,13 @@ function POS() {
   const orderBlocked = checkingPrices || missingLines.length > 0;
   // Checked again when an action runs, since a dialog may have been opened before.
   const orderBlockedReason = () =>
-    checkingPrices
-      ? "Checking the latest prices. Try again in a moment."
-      : missingLines.length
-        ? `${missingLines.map((line) => line.name).join(", ")} is no longer on the menu. Remove it first.`
-        : null;
+    deliveryAmountInput.current && !deliveryAmountInput.current.checkValidity()
+      ? "Enter a valid delivery amount before saving the order."
+      : checkingPrices
+        ? "Checking the latest prices. Try again in a moment."
+        : missingLines.length
+          ? `${missingLines.map((line) => line.name).join(", ")} is no longer on the menu. Remove it first.`
+          : null;
   const taxTotals = items.reduce(
     (totals, line) => {
       const rule = line.p.taxRuleId ? pricingRules.get(line.p.taxRuleId) : undefined;
@@ -817,6 +821,10 @@ function POS() {
     tenant.defaultCurrency,
   );
   const tax = majorFromMinor(taxTotals.reported + serviceTotals.reported, tenant.defaultCurrency);
+  // Prices that already include VAT and service show them as "included", not as an add-on.
+  const chargesIncluded =
+    taxTotals.reported + serviceTotals.reported > 0 && taxTotals.added + serviceTotals.added === 0;
+  const taxLabel = chargesIncluded ? "Included tax and service" : "Tax and service";
   const total = majorFromMinor(
     subtotalMinor + taxTotals.added + serviceTotals.added + deliveryAmountMinor,
     tenant.defaultCurrency,
@@ -1873,6 +1881,8 @@ function POS() {
             )}
             {configuredDelivery && (
               <DeliveryChargeFields
+                key={`${activeTenantId}:${branchId}:${selectedChannel?.id}:${activeOrder?.id ?? "new"}`}
+                inputRef={deliveryAmountInput}
                 settings={configuredDelivery}
                 branchId={branchId}
                 currency={tenant.defaultCurrency}
@@ -2152,8 +2162,16 @@ function POS() {
                   <dt>Subtotal</dt>
                   <dd className="num">{formatMoney(subtotal)}</dd>
                 </div>
+                {deliveryAmountMinor > 0 && (
+                  <div className="flex justify-between text-muted-foreground">
+                    <dt>Delivery</dt>
+                    <dd className="num">
+                      {formatMoney(majorFromMinor(deliveryAmountMinor, tenant.defaultCurrency))}
+                    </dd>
+                  </div>
+                )}
                 <div className="flex justify-between text-muted-foreground">
-                  <dt>Tax and service</dt>
+                  <dt>{taxLabel}</dt>
                   <dd className="num">{formatMoney(tax)}</dd>
                 </div>
                 <div className="flex justify-between border-t border-border pt-2 text-[16px] font-bold">
@@ -2360,8 +2378,16 @@ function POS() {
                     <dt className="text-muted-foreground">Subtotal</dt>
                     <dd className="num font-semibold">{formatMoney(subtotal)}</dd>
                   </div>
+                  {deliveryAmountMinor > 0 && (
+                    <div className="flex justify-between">
+                      <dt>Delivery</dt>
+                      <dd className="num font-semibold">
+                        {formatMoney(majorFromMinor(deliveryAmountMinor, tenant.defaultCurrency))}
+                      </dd>
+                    </div>
+                  )}
                   <div className="flex justify-between">
-                    <dt className="text-muted-foreground">Tax and service</dt>
+                    <dt className="text-muted-foreground">{taxLabel}</dt>
                     <dd className="num font-semibold">{formatMoney(tax)}</dd>
                   </div>
                   <div className="flex justify-between border-t border-border pt-2">
@@ -2400,8 +2426,16 @@ function POS() {
                 <dt>Subtotal</dt>
                 <dd className="num">{formatMoney(subtotal)}</dd>
               </div>
+              {deliveryAmountMinor > 0 && (
+                <div className="flex justify-between text-muted-foreground">
+                  <dt>Delivery</dt>
+                  <dd className="num">
+                    {formatMoney(majorFromMinor(deliveryAmountMinor, tenant.defaultCurrency))}
+                  </dd>
+                </div>
+              )}
               <div className="flex justify-between text-muted-foreground">
-                <dt>Tax and service</dt>
+                <dt>{taxLabel}</dt>
                 <dd className="num">{formatMoney(tax)}</dd>
               </div>
               <div className="flex justify-between border-t border-border pt-2 text-[16px] font-bold">

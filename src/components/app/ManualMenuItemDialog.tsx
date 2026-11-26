@@ -21,6 +21,8 @@ type Props = {
   currency: string;
   categoryCodes: string[];
   stations: Station[];
+  /** Active tax rules (VAT); the first is chosen by default so new items carry VAT. */
+  taxRules?: Array<{ id: string; label: string }>;
   createItem: (input: ManualMenuItemCreateInput) => Promise<unknown>;
   onCommitted: () => void;
 };
@@ -33,9 +35,11 @@ export function ManualMenuItemDialog({
   currency,
   categoryCodes,
   stations,
+  taxRules = [],
   createItem,
   onCommitted,
 }: Props) {
+  const defaultTaxCode = taxRules[0]?.id ?? "";
   const [selectedBranchId, setSelectedBranchId] = useState(initialBranchId);
   const availableStations = stations.filter((station) => station.branch_id === selectedBranchId);
   const branchName = branches.find((branch) => branch.id === selectedBranchId)?.name ?? "";
@@ -50,7 +54,7 @@ export function ManualMenuItemDialog({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [branchPrice, setBranchPrice] = useState("");
   const [onlinePrice, setOnlinePrice] = useState("");
-  const [taxCode, setTaxCode] = useState("");
+  const [taxCode, setTaxCode] = useState(defaultTaxCode);
   const [unitOfMeasure, setUnitOfMeasure] = useState("");
   const [recipeCode, setRecipeCode] = useState("");
   const [serviceChargeApplicable, setServiceChargeApplicable] = useState(false);
@@ -74,7 +78,7 @@ export function ManualMenuItemDialog({
       setCounterOnly(false);
       setBranchPrice("");
       setOnlinePrice("");
-      setTaxCode("");
+      setTaxCode(defaultTaxCode);
       setUnitOfMeasure("");
       setRecipeCode("");
       setServiceChargeApplicable(false);
@@ -85,7 +89,7 @@ export function ManualMenuItemDialog({
     setError("");
     setNotice("");
     setPreviewRevision(-1);
-  }, [initialBranchId, currency, open]);
+  }, [initialBranchId, currency, open, defaultTaxCode]);
 
   function edit(change: () => void) {
     change();
@@ -320,8 +324,8 @@ export function ManualMenuItemDialog({
               More item details (optional)
             </summary>
             <p className="mt-2 text-[11px] text-muted-foreground">
-              Only enter values already configured for your business. Unrecognized tax, unit or
-              recipe codes must be resolved before they can be used.
+              Only enter values already configured for your business. Unrecognized unit or recipe
+              codes must be resolved before they can be used.
             </p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <label className="grid gap-1 text-[12px] font-semibold">
@@ -345,14 +349,19 @@ export function ManualMenuItemDialog({
                 />
               </label>
               <label className="grid gap-1 text-[12px] font-semibold">
-                Tax rule code
-                <input
+                Tax
+                <select
                   value={taxCode}
-                  maxLength={80}
-                  placeholder="Existing configured rule"
                   onChange={(event) => edit(() => setTaxCode(event.target.value))}
                   className={inputClass}
-                />
+                >
+                  {taxRules.map((rule) => (
+                    <option key={rule.id} value={rule.id}>
+                      {rule.label}
+                    </option>
+                  ))}
+                  <option value="">No tax</option>
+                </select>
               </label>
               <label className="grid gap-1 text-[12px] font-semibold">
                 Unit of measure

@@ -2,7 +2,6 @@ export type SettingsRoute =
   | "/accounting"
   | "/ai"
   | "/approvals"
-  | "/audit-trail"
   | "/branches"
   | "/campaigns"
   | "/categories"
@@ -11,7 +10,6 @@ export type SettingsRoute =
   | "/integrations"
   | "/loyalty"
   | "/marketing"
-  | "/notifications"
   | "/par"
   | "/payroll"
   | "/purchase-orders"
@@ -274,12 +272,6 @@ export const settingsGroups: readonly SettingsGroup[] = [
         to: "/integrations",
       },
       {
-        label: "Notifications",
-        description: "Messages Seramet has sent, and whether they arrived.",
-        kind: "route",
-        to: "/notifications",
-      },
-      {
         label: "AI",
         description: "Ask Seramet questions about your business.",
         kind: "route",
@@ -290,12 +282,6 @@ export const settingsGroups: readonly SettingsGroup[] = [
         description: "Colours and display.",
         kind: "route",
         to: "/design-system",
-      },
-      {
-        label: "Audit",
-        description: "A record of every change made.",
-        kind: "route",
-        to: "/audit-trail",
       },
       {
         label: "System",

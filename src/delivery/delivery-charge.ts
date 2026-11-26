@@ -6,6 +6,7 @@ export const deliverySettingsSchema = z
     fulfilment: z.enum(["RESTAURANT", "PROVIDER", "PICKUP", "NONE"]),
     beneficiary: z.enum(["RIDER", "BUSINESS"]),
     allowManual: z.boolean(),
+    allowOrderAmount: z.boolean().default(false),
     // Who receives money the customer pays on delivery. COUNTER: the rider only delivers and
     // the cashier clears the invoice with whatever was paid. RIDER: the rider carries it and
     // is tracked until it is handed in.
@@ -39,7 +40,7 @@ export const deliveryChargeSchema = z
   .object({
     amountMinor: z.number().int().nonnegative().safe(),
     beneficiary: z.enum(["RIDER", "BUSINESS"]),
-    source: z.enum(["RATE", "MANUAL", "PROVIDER"]),
+    source: z.enum(["RATE", "MANUAL", "PROVIDER", "ORDER"]),
     rateId: z.string().max(80).optional(),
     reason: z.string().trim().max(500).optional(),
   })
@@ -59,6 +60,21 @@ export function deliverySettings(channel: Pick<OrderChannelDefinition, "metadata
   return parsed.success ? parsed.data : undefined;
 }
 
+/** Owner-controlled amount entry, independent of marketplace names or online pricing. */
+export function withRiderDelivery(
+  channel: Pick<OrderChannelDefinition, "metadata"> | undefined,
+  enabled: boolean,
+): DeliverySettings {
+  return deliverySettingsSchema.parse({
+    beneficiary: "RIDER",
+    allowManual: false,
+    rates: [],
+    ...deliverySettings(channel),
+    fulfilment: enabled ? "RESTAURANT" : "PROVIDER",
+    allowOrderAmount: enabled,
+  });
+}
+
 /** Riders carry customer money only where the channel says so; the counter is the default. */
 export function ridersCarryCash(channel: Pick<OrderChannelDefinition, "metadata"> | undefined) {
   return deliverySettings(channel)?.cashHandledBy === "RIDER";
@@ -75,7 +91,10 @@ export function validateLocalDeliveryCharge(
     throw new Error("Configure restaurant delivery before adding a delivery charge");
   if (charge.beneficiary !== settings.beneficiary)
     throw new Error("Delivery fee recipient does not match channel settings");
-  if (charge.source === "RATE") {
+  if (charge.source === "ORDER") {
+    if (!settings.allowOrderAmount)
+      throw new Error("Delivery amount entry is disabled for this channel");
+  } else if (charge.source === "RATE") {
     const rate = settings.rates.find(
       (row) =>
         row.id === charge.rateId && (!row.branchIds.length || row.branchIds.includes(branchId)),

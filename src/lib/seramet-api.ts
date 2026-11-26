@@ -1799,14 +1799,38 @@ function assertBranchSafeSnapshotReplace(
   }
 }
 
-function mergeSnapshotForActor(
+/**
+ * State reads blank employee pay for anyone without payroll or finance rights. A snapshot
+ * they send back must not write that blank over the real pay.
+ */
+export function keepPayUnlessPayroll(
   current: TransactionState,
   next: TransactionState,
   actor: ServerActor,
+): Pick<TransactionState, "employees"> {
+  if (
+    actor.permissions.includes(permissions.payrollManage) ||
+    actor.permissions.includes(permissions.financeView)
+  )
+    return { employees: next.employees };
+  const pay = new Map(current.employees.map((employee) => [employee.id, employee.netMonthlyPay]));
+  return {
+    employees: next.employees.map((employee) => ({
+      ...employee,
+      netMonthlyPay: pay.get(employee.id) ?? 0,
+    })),
+  };
+}
+
+function mergeSnapshotForActor(
+  current: TransactionState,
+  sent: TransactionState,
+  actor: ServerActor,
 ): TransactionState {
-  if (next.tenantId !== actor.tenantId || current.tenantId !== actor.tenantId) {
+  if (sent.tenantId !== actor.tenantId || current.tenantId !== actor.tenantId) {
     throw new SerametHttpError(403, "Cross-tenant snapshot access denied");
   }
+  const next = { ...sent, ...keepPayUnlessPayroll(current, sent, actor) };
   if (
     actor.branchScope.type === "ALL" &&
     actor.permissions.includes(permissions.tenantScopeAllBranches)
@@ -2060,7 +2084,20 @@ export function filterStateForActor(state: TransactionState, actor: ServerActor)
       }));
     return { ...createEmptyTransactionState(actor.tenantId), orders };
   }
-  return closingStateForReader(scoped, actor.permissions.includes(permissions.reconciliationView));
+  const readable = closingStateForReader(
+    scoped,
+    actor.permissions.includes(permissions.reconciliationView),
+  );
+  // Pay is for payroll and finance; others (a supervisor closing the day) see names only.
+  if (
+    actor.permissions.includes(permissions.payrollManage) ||
+    actor.permissions.includes(permissions.financeView)
+  )
+    return readable;
+  return {
+    ...readable,
+    employees: readable.employees.map((employee) => ({ ...employee, netMonthlyPay: 0 })),
+  };
 }
 
 async function loadCachedIdempotency(

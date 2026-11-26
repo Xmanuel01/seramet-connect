@@ -1,6 +1,5 @@
 import { clearInteractiveSignIn, revokeAllBrowserSessions } from "@/lib/auth-client";
 import { emptyRecords } from "@/lib/empty-records";
-import { pilotUnavailable } from "@/lib/pilot-unavailable";
 import { useAttendanceDelays } from "@/hooks/use-attendance-delays";
 import { useMarketplaceAttention } from "@/hooks/use-marketplace-attention";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
@@ -155,13 +154,6 @@ const quickCreateOptions: {
     icon: Package,
     permission: permissionCodes.inventoryAdjust,
   },
-  {
-    id: "task",
-    label: "Task",
-    to: "/tasks",
-    icon: ClipboardList,
-    permission: permissionCodes.ordersUpdate,
-  },
 ];
 
 // The sidebar is rebuilt on every page; keep its open section and scroll position for the
@@ -275,18 +267,6 @@ export function AppShell({
   const locationSearch = useRouterState().location.search as Record<string, unknown>;
   const isActive = (item: NavItem, siblings: readonly NavItem[] = []) =>
     navItemIsActive(item, path, locationSearch, siblings);
-  const unavailable = pilotUnavailable[path];
-  const pageContent = unavailable ? (
-    <section role="status" className="rounded-md border border-border bg-card p-6">
-      <h2 className="text-base font-semibold">{unavailable} isn't available yet</h2>
-      <p className="mt-2 text-sm text-muted-foreground">
-        This part of Seramet is still being built, so nothing is recorded here. Use the menu to
-        continue.
-      </p>
-    </section>
-  ) : (
-    children
-  );
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -1142,7 +1122,7 @@ export function AppShell({
         </Dialog>
 
         {bare ? (
-          <main className="min-w-0 flex-1 overflow-x-hidden">{pageContent}</main>
+          <main className="min-w-0 flex-1 overflow-x-hidden">{children}</main>
         ) : (
           <main className="min-w-0 flex-1 overflow-x-hidden px-4 py-5 md:px-6">
             {title && (
@@ -1153,14 +1133,14 @@ export function AppShell({
                     <div className="mt-0.5 text-[13px] text-muted-foreground">{subtitle}</div>
                   )}
                 </div>
-                {actions && !unavailable && (
+                {actions && (
                   <div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end">
                     {actions}
                   </div>
                 )}
               </div>
             )}
-            {pageContent}
+            {children}
           </main>
         )}
       </div>
@@ -1183,7 +1163,6 @@ function routeForAction(label: string) {
     ["requisition", "/requisitions"],
     ["supplier", "/suppliers"],
     ["expense", "/expenses"],
-    ["task", "/tasks"],
     ["report", "/reports"],
     ["customer", "/customers"],
     ["inventory", "/inventory"],
@@ -1192,9 +1171,8 @@ function routeForAction(label: string) {
     ["invoice", "/invoices"],
     ["receipt", "/receipts"],
     ["refund", "/refunds"],
-    ["return", "/returns"],
+    ["return", "/refunds"],
     ["campaign", "/campaigns"],
-    ["audit", "/audit-trail"],
   ];
   return entries.find(([key]) => normalized.includes(key))?.[1];
 }

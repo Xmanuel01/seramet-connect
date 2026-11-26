@@ -3,6 +3,7 @@ import { DeliverySettingsDialog } from "@/delivery/DeliverySettingsDialog";
 import { PayoutAccountsDialog } from "@/components/app/PayoutAccountsDialog";
 import type { PayoutAccounts } from "@/payments/payout-accounts";
 import type { DeliverySettings } from "@/delivery/delivery-charge";
+import { deliverySettings } from "@/delivery/delivery-charge";
 import { ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
@@ -19,7 +20,6 @@ import {
   type PermissionRequirement,
 } from "@/platform/module-access-registry";
 import { permissions as platformPermissions } from "@/platform/permissions";
-import { pilotUnavailable } from "@/lib/pilot-unavailable";
 import { settingsGroups } from "@/platform/settings-navigation";
 import type { OrderChannelType, PaymentMethodCategory } from "@/platform/types";
 
@@ -73,6 +73,7 @@ function Settings() {
   const [channelCode, setChannelCode] = useState("");
   const [channelType, setChannelType] = useState<OrderChannelType>("OTHER");
   const [channelUsesOnlinePrice, setChannelUsesOnlinePrice] = useState(false);
+  const [channelRiderDelivery, setChannelRiderDelivery] = useState(false);
   // Follows the channel type until the user sets it themselves.
   const [channelRequiresTable, setChannelRequiresTable] = useState<boolean | null>(null);
   const newChannelRequiresTable = channelRequiresTable ?? channelType === "DINE_IN";
@@ -116,9 +117,7 @@ function Settings() {
     .map((group) => ({
       ...group,
       items: group.items.filter(
-        (item) =>
-          item.kind === "inline" ||
-          (!pilotUnavailable[item.to] && canNavigateToPath(moduleAccess, item.to)),
+        (item) => item.kind === "inline" || canNavigateToPath(moduleAccess, item.to),
       ),
     }))
     .filter((group) => group.items.length > 0);
@@ -216,12 +215,14 @@ function Settings() {
         code,
         channelType,
         useOnlinePrice: channelUsesOnlinePrice,
+        riderDeliveryEnabled: channelRiderDelivery,
         requiresTable: newChannelRequiresTable,
         reason: "Created from Settings order channels",
       });
       setChannelName("");
       setChannelCode("");
       setChannelUsesOnlinePrice(false);
+      setChannelRiderDelivery(false);
       setChannelRequiresTable(null);
       setConfigNotice({
         kind: "success",
@@ -286,6 +287,7 @@ function Settings() {
       useOnlinePrice?: boolean;
       requiresTable?: boolean;
       deliverySettings?: DeliverySettings;
+      riderDeliveryEnabled?: boolean;
       payoutAccounts?: PayoutAccounts;
     },
   ) => {
@@ -451,21 +453,7 @@ function Settings() {
   );
 
   return (
-    <AppShell
-      title="Settings"
-      subtitle={tenant?.tradingName ?? undefined}
-      actions={
-        !pilotUnavailable["/audit-trail"] && canNavigateToPath(moduleAccess, "/audit-trail") ? (
-          <Link
-            to="/audit-trail"
-            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border bg-card px-3 text-[13px] font-semibold transition-colors hover:bg-secondary"
-          >
-            Audit log
-            <ArrowRight className="h-4 w-4" aria-hidden="true" />
-          </Link>
-        ) : undefined
-      }
-    >
+    <AppShell title="Settings" subtitle={tenant?.tradingName ?? undefined}>
       <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
         <Panel className="p-2">
           <nav className="space-y-1">
@@ -879,6 +867,15 @@ function Settings() {
                   />
                   Use online price
                 </label>
+                <label className="flex min-h-9 items-center gap-2 self-end rounded-md border border-border bg-card px-3 text-[12px] font-semibold text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={channelRiderDelivery}
+                    disabled={!canManageOrderChannels || Boolean(configSaving)}
+                    onChange={(event) => setChannelRiderDelivery(event.target.checked)}
+                  />
+                  Rider delivery
+                </label>
                 <label className="flex h-9 items-center gap-2 self-end rounded-md border border-border bg-card px-3 text-[12px] font-semibold text-foreground">
                   <input
                     type="checkbox"
@@ -916,6 +913,19 @@ function Settings() {
                     </div>
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       <Status>{channel.enabled ? "Active" : "Disabled"}</Status>
+                      <label className="flex items-center gap-2 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={deliverySettings(channel)?.fulfilment === "RESTAURANT"}
+                          disabled={!canManageOrderChannels || Boolean(configSaving)}
+                          onChange={(event) =>
+                            void updateConfiguredChannel(channel.id, channel.displayName, {
+                              riderDeliveryEnabled: event.target.checked,
+                            })
+                          }
+                        />
+                        Rider delivery
+                      </label>
                       {channel.channelType === "MARKETPLACE" && (
                         <PayoutAccountsDialog
                           channel={channel}

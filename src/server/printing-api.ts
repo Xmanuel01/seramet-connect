@@ -774,6 +774,65 @@ export async function handlePrintingApi(
     ]);
     return respond(await readReceiptLogos(db, actor.tenantId, actor.branchId));
   }
+  if (url.pathname === "/api/seramet/printing/kitchen-mode" && request.method === "PUT") {
+    // How kitchen orders reach the kitchen, for a branch with or without printers. It is also
+    // an onboarding step, so whoever may run setup can choose it as well.
+    requireFullAuthentication(actor);
+    if (
+      !actor.permissions.includes(permissions.settingsHardwareManage) &&
+      !actor.permissions.includes(permissions.setupManage)
+    )
+      requirePermission(actor, permissions.settingsHardwareManage);
+    const parsedMode = z
+      .object({
+        branchId: z.string().min(1).optional(),
+        kitchenMode: z.enum([
+          "KDS_ONLY",
+          "PRINTER_ONLY",
+          "KDS_AND_PRINTER",
+          "NO_DEDICATED_KITCHEN_SYSTEM",
+        ]),
+      })
+      .strict()
+      .safeParse(await parse(request));
+    if (!parsedMode.success)
+      throw new SerametHttpError(400, "Choose how orders reach the kitchen.");
+    const input = parsedMode.data;
+    const branchId = input.branchId ?? actor.branchId;
+    if (
+      branchId !== actor.branchId &&
+      actor.branchScope.type !== "ALL" &&
+      !actor.assignedBranchIds.includes(branchId)
+    )
+      throw new SerametHttpError(403, "Printer action is not authorized");
+    const branchRow = await db
+      .prepare("SELECT payload_json FROM branches WHERE tenant_id=? AND id=?")
+      .bind(actor.tenantId, branchId)
+      .first<{ payload_json: string }>();
+    if (!branchRow) throw new SerametHttpError(404, "Branch not found");
+    const branchPayload = JSON.parse(branchRow.payload_json) as {
+      metadata?: Record<string, unknown>;
+    };
+    await db.batch([
+      db.prepare("UPDATE branches SET payload_json=? WHERE tenant_id=? AND id=?").bind(
+        JSON.stringify({
+          ...branchPayload,
+          metadata: { ...branchPayload.metadata, kitchenMode: input.kitchenMode },
+        }),
+        actor.tenantId,
+        branchId,
+      ),
+      auditStatement(
+        db,
+        actor,
+        `KITCHEN-MODE:${crypto.randomUUID()}`,
+        "KITCHEN_MODE_SET",
+        `Branch ${branchId}: ${input.kitchenMode}`,
+      ),
+    ]);
+    await invalidateAuthoritativeConfiguration(db, actor.tenantId);
+    return respond({ branchId, kitchenMode: input.kitchenMode });
+  }
   if (url.pathname === "/api/seramet/printing/dispatch-bypass") {
     // Lets the active branch send orders to the kitchen without a printer or
     // KDS route for 36 hours. Only hardware managers may turn it on or off.

@@ -268,6 +268,7 @@ describe.sequential("guided onboarding flow against real records", () => {
       name: "Kitchen",
       stationType: "KITCHEN",
     });
+    await chooseKitchenMode(db, provisioned.tenantId, provisioned.branchId);
     await save(step("stations"), {});
 
     await expect(save(step("menu"), {})).rejects.toThrow(/menu item/);
@@ -479,6 +480,7 @@ describe.sequential("guided onboarding flow against real records", () => {
       name: "Kitchen",
       stationType: "KITCHEN",
     });
+    await chooseKitchenMode(db, provisioned.tenantId, provisioned.branchId);
     await save(step("stations"), {});
     await save(step("menu"), { later: true });
     await save(step("team"), {});
@@ -649,6 +651,7 @@ describe.sequential("guided onboarding flow against real records", () => {
       name: "Kitchen",
       stationType: "KITCHEN",
     });
+    await chooseKitchenMode(db, provisioned.tenantId, provisioned.branchId);
     await save(step("stations"), {});
     if (options.menu)
       await setup.createManualMenuItem({
@@ -707,4 +710,14 @@ function actor(provisioned: RestaurantRegistrationResult): ServerActor {
     branch: "Configured branch",
     role: "Configured administrator",
   };
+}
+
+/** What the wizard's stations step does: choose how orders reach the kitchen. */
+async function chooseKitchenMode(db: SqliteD1TestDatabase, tenantId: string, branchId: string) {
+  await db
+    .prepare(
+      "UPDATE branches SET payload_json=json_set(payload_json,'$.metadata.kitchenMode','KDS_ONLY') WHERE tenant_id=? AND id=?",
+    )
+    .bind(tenantId, branchId)
+    .run();
 }

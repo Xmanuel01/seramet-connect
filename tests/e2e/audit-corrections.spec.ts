@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { PDFDocument } from "pdf-lib";
 import { fixture } from "./pos-stability-helpers";
-import { pilotUnavailable } from "../../src/lib/pilot-unavailable";
 import type { TransactionState } from "../../src/lib/transaction-engine";
 
 test.beforeAll(() => {
@@ -122,7 +121,7 @@ test("refund request/approval uses exact receipt and selection, retains failed d
   const dialog = page.getByRole("dialog", { name: "Request a refund" });
   await expect(dialog.getByLabel("Source receipt")).toHaveValue("");
   await dialog.getByLabel("Source receipt").selectOption(sources[1]!.id);
-  await dialog.getByLabel("Collected method").selectOption(sources[1]!.paymentBreakdown[0]!.method);
+  await dialog.getByLabel("Paid by").selectOption(sources[1]!.paymentBreakdown[0]!.method);
   await dialog.getByLabel("Refund amount").fill("2000");
   await dialog.getByLabel("Refund reason").fill("Selected customer returned an incorrect item");
   const confirm = dialog.getByRole("button", { name: "Confirm refund request", exact: true });
@@ -199,7 +198,7 @@ test("refund request/approval uses exact receipt and selection, retains failed d
   await page.getByRole("button", { name: "Request refund", exact: true }).click();
   await expect(dialog).toBeVisible();
   await dialog.getByLabel("Source receipt").selectOption(sources[1]!.id);
-  await dialog.getByLabel("Collected method").selectOption(sources[1]!.paymentBreakdown[0]!.method);
+  await dialog.getByLabel("Paid by").selectOption(sources[1]!.paymentBreakdown[0]!.method);
   await dialog.getByLabel("Refund amount").fill("50");
   await dialog.getByLabel("Refund reason").fill("Phone review only - not submitted");
   const bounds = await dialog.boundingBox();
@@ -294,7 +293,7 @@ test("actual POS Hold carries known components through invoice, payment, immutab
   }
 });
 
-test("delivery links stay client-side and unavailable registers do not claim empty authoritative histories", async ({
+test("delivery links stay client-side and never-built registers lead to the real pages", async ({
   context,
   page,
 }) => {
@@ -310,12 +309,19 @@ test("delivery links stay client-side and unavailable registers do not claim emp
   await page.getByRole("button", { name: "View delivery queue", exact: true }).click();
   await expect(page).toHaveURL(/\/delivery$/);
   expect(await page.evaluate(() => document.documentElement.dataset.auditDocument)).toBe(marker);
-  for (const [path, name] of Object.entries(pilotUnavailable)) {
+  // Registers that were never built are gone; their old addresses open the real page.
+  for (const [path, target] of [
+    ["/decisions", /\/approvals$/],
+    ["/tasks", /\/approvals$/],
+    ["/notifications", /\/approvals$/],
+    ["/audit-trail", /\/enterprise$/],
+    ["/leave", /\/people$/],
+    ["/recruitment", /\/people$/],
+    ["/returns", /\/payment-control\?tab=refunds$/],
+  ] as const) {
     await page.goto(path);
-    await expect(
-      page.getByRole("heading", { name: `${name} isn't available yet`, exact: true }),
-    ).toBeVisible();
-    await expect(page.getByRole("table")).toHaveCount(0);
+    await expect(page).toHaveURL(target);
+    await expect(page.getByText(/isn't available yet/)).toHaveCount(0);
   }
 });
 

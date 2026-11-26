@@ -1365,6 +1365,17 @@ function MenuImport() {
           code: stringValue(station["code"]),
           branch_id: stringValue(station["branch_id"]),
         }))}
+        taxRules={centre.options.taxRules
+          .filter(
+            (rule) =>
+              stringValue(rule["rule_type"]) === "TAX" &&
+              Number(rule["active"]) === 1 &&
+              (!stringValue(rule["branch_id"]) || stringValue(rule["branch_id"]) === branchId),
+          )
+          .map((rule) => ({
+            id: stringValue(rule["id"]),
+            label: stringValue(rule["name"]) || stringValue(rule["code"]),
+          }))}
         createItem={centre.createManualMenuItem}
         onCommitted={() => {
           setNotice("Menu item saved.");
