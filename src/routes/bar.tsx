@@ -327,10 +327,7 @@ function BarModule() {
         </Panel>
 
         <Panel>
-          <PanelHead
-            title="Bar readiness"
-            sub="Branch capability, station routing and printer health"
-          />
+          <PanelHead title="Bar readiness" />
           <div className="space-y-3 p-4 text-[13px]">
             <ReadinessRow label="Bar module" value={barModuleEnabled ? "Enabled" : "Disabled"} />
             <ReadinessRow label="Backend" value={backendStatus} />

@@ -238,7 +238,7 @@ test("actual POS Hold carries known components through invoice, payment, immutab
   const note = randomUUID();
   await page.getByPlaceholder("Item note").fill(note);
   await page.getByRole("button", { name: "Hold", exact: true }).click();
-  await expect(page.getByText("Order held in active orders.")).toBeVisible();
+  await expect(page.getByText("Order held.")).toBeVisible();
   const order = (await snapshot()).state.orders.find((row) =>
     row.lines.some((line) => line.itemNote === note),
   )!;

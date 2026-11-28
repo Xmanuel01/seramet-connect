@@ -118,7 +118,6 @@ function KitchenAnalytics() {
             <Panel>
               <PanelHead
                 title="Prep execution"
-                sub="Prep tasks from suggestion to completion"
                 right={<ClipboardCheck className="h-4 w-4 text-primary" />}
               />
               <div className="grid grid-cols-2 gap-3 p-4">
@@ -134,7 +133,6 @@ function KitchenAnalytics() {
             <Panel>
               <PanelHead
                 title="Production yield"
-                sub="Completed batch output versus planned standard"
                 right={<Factory className="h-4 w-4 text-primary" />}
               />
               <div className="grid grid-cols-2 gap-3 p-4">
@@ -157,7 +155,6 @@ function KitchenAnalytics() {
             <Panel>
               <PanelHead
                 title="Kitchen standards"
-                sub="Current recipe versions with published Cookbook methods"
                 right={<BookOpenCheck className="h-4 w-4 text-primary" />}
               />
               <div className="grid grid-cols-2 gap-3 p-4">
@@ -176,7 +173,6 @@ function KitchenAnalytics() {
           <Panel className="mt-4 overflow-x-auto">
             <PanelHead
               title="Station performance"
-              sub="Period totals with weighted preparation and pickup timing"
               right={<ChefHat className="h-4 w-4 text-primary" />}
             />
             <table className="w-full min-w-[980px]">
@@ -230,7 +226,6 @@ function KitchenAnalytics() {
             <Panel className="overflow-x-auto">
               <PanelHead
                 title="Daily kitchen trend"
-                sub="Late-rate and preparation-time movement across the selected period"
                 right={<Timer className="h-4 w-4 text-primary" />}
               />
               <table className="w-full min-w-[700px]">
@@ -269,7 +264,6 @@ function KitchenAnalytics() {
             <Panel>
               <PanelHead
                 title="Today's prep blockers"
-                sub="Issues stopping prep from going ahead"
                 right={
                   overview.currentPrep.blockerCount > 0 ? (
                     <AlertTriangle className="h-4 w-4 text-warning" />

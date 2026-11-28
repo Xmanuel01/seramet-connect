@@ -8,7 +8,6 @@ import {
   Network,
   RefreshCw,
   Search,
-  ShieldCheck,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
@@ -99,7 +98,6 @@ function EnterpriseControlCentre() {
   return (
     <AppShell
       title="Enterprise control"
-      subtitle="Scoped group, legal-entity, brand, region and branch operations"
       actions={
         <Btn onClick={() => void enterprise.refresh()} disabled={enterprise.status === "loading"}>
           <RefreshCw
@@ -147,9 +145,7 @@ function EnterpriseControlCentre() {
       </div>
 
       {enterprise.status === "loading" && !overview && (
-        <Panel className="p-5 text-[13px] text-muted-foreground">
-          Loading authorized enterprise scope...
-        </Panel>
+        <Panel className="p-5 text-[13px] text-muted-foreground">Loading...</Panel>
       )}
       {enterprise.status === "error" && (
         <Panel className="border-danger/30 p-5">
@@ -225,8 +221,7 @@ function OverviewView({
       {dashboard?.crossCurrency && (
         <div className="mt-3 flex items-center gap-2 rounded-md border border-warning/30 bg-warning-soft px-3 py-2 text-[12px] text-warning">
           <AlertTriangle className="h-4 w-4 shrink-0" />
-          Monetary totals are unavailable because this scope contains multiple currencies and no
-          authoritative FX basis is configured.
+          Totals aren&apos;t shown because these branches use different currencies.
         </div>
       )}
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
@@ -254,29 +249,17 @@ function OverviewView({
               branch.orderCount.toLocaleString(),
               <Status key={`${branch.branchId}:quality`}>{pretty(branch.quality)}</Status>,
             ])}
-            empty="No persisted branch metrics exist for this period."
+            empty="No branch figures for this period."
           />
         </Panel>
         <div className="grid content-start gap-4">
           <Panel>
-            <PanelHead title="Control coverage" sub="Records in the authorized scope" />
+            <PanelHead title="Control coverage" />
             <div className="grid grid-cols-2 gap-px bg-border">
               <SmallMetric label="Policies" value={overview.policies.length} />
               <SmallMetric label="Rollouts" value={overview.rollouts.length} />
               <SmallMetric label="Franchises" value={overview.franchises.length} />
               <SmallMetric label="Readiness checks" value={overview.readiness.length} />
-            </div>
-          </Panel>
-          <Panel className="p-4">
-            <div className="flex items-start gap-3">
-              <ShieldCheck className="h-5 w-5 text-success" />
-              <div>
-                <div className="text-[13px] font-semibold">Management reporting boundary</div>
-                <p className="mt-1 text-[12px] leading-5 text-muted-foreground">
-                  Figures retain branch and legal-entity attribution. Statutory consolidation is not
-                  presented as available.
-                </p>
-              </div>
             </div>
           </Panel>
         </div>
@@ -298,7 +281,6 @@ function OrganisationView({ nodes }: { nodes: EnterpriseNode[] }) {
     <Panel>
       <PanelHead
         title="Organization hierarchy"
-        sub="Your organisation structure and when each change takes effect"
         right={
           <label className="relative block">
             <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -333,7 +315,7 @@ function OrganisationView({ nodes }: { nodes: EnterpriseNode[] }) {
           node.childCount,
           node.currency ?? "Inherited",
         ])}
-        empty="No enterprise nodes are visible in your authorized scope."
+        empty="Nothing to show."
       />
     </Panel>
   );
@@ -354,10 +336,10 @@ function AuditView({
     <Panel>
       <PanelHead
         title="Enterprise audit"
-        sub="Authorized scope, bounded to the 100 most recent events"
+        sub="Last 100 changes"
         right={
           canExport ? (
-            <Btn onClick={onExport} title="Create a server-authorized audit export">
+            <Btn onClick={onExport} title="Export the change history">
               <Download className="h-4 w-4" />
               Export
             </Btn>
@@ -381,7 +363,7 @@ function AuditView({
             {textValue(event["correlation_id"])}
           </span>,
         ])}
-        empty="No audit events are visible in this authorized scope."
+        empty="No changes yet."
       />
     </Panel>
   );
@@ -397,7 +379,7 @@ function PoliciesView({
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
       <Panel>
-        <PanelHead title="Policy inheritance" sub="Configured source, state and effective period" />
+        <PanelHead title="Policy inheritance" />
         <DataTable
           columns={["Policy", "Category", "Scope", "State", "Effective", "Until"]}
           rows={policies.map((row, index) => [
@@ -412,7 +394,7 @@ function PoliciesView({
         />
       </Panel>
       <Panel>
-        <PanelHead title="Exception queue" sub="Explicit, reviewable deviations" />
+        <PanelHead title="Exception queue" />
         <div className="divide-y divide-border">
           {exceptions.map((row, index) => (
             <div key={textValue(row.id, String(index))} className="p-4">
@@ -443,10 +425,7 @@ function RolloutsView({
   return (
     <div className="grid gap-4 xl:grid-cols-2">
       <Panel>
-        <PanelHead
-          title="Controlled rollouts"
-          sub="Previewed, approved and idempotent branch changes"
-        />
+        <PanelHead title="Controlled rollouts" />
         <DataTable
           columns={["Type", "Scope", "Status", "Scheduled", "Updated"]}
           rows={rollouts.map((row, index) => [
@@ -460,7 +439,7 @@ function RolloutsView({
         />
       </Panel>
       <Panel>
-        <PanelHead title="Branch templates" sub="Versioned configuration baselines" />
+        <PanelHead title="Branch templates" />
         <DataTable
           columns={["Template", "Status", "Latest", "Published", "Branches"]}
           rows={templates.map((row, index) => [
@@ -480,7 +459,7 @@ function RolloutsView({
 function ProcurementView({ contracts }: { contracts: EnterpriseRecord[] }) {
   return (
     <Panel>
-      <PanelHead title="Central procurement" sub="Scoped supplier contracts and negotiated terms" />
+      <PanelHead title="Central procurement" />
       <DataTable
         columns={["Supplier", "Contract", "Price", "Lead time", "Status", "Effective"]}
         rows={contracts.map((row, index) => [
@@ -509,10 +488,7 @@ function FranchiseView({
   return (
     <div className="grid gap-4">
       <Panel>
-        <PanelHead
-          title="Franchise relationships"
-          sub="Separate legal entities with explicitly governed access"
-        />
+        <PanelHead title="Franchise relationships" />
         <DataTable
           columns={["Franchisee", "Franchisor", "Agreement", "Branches", "Status"]}
           rows={franchises.map((row, index) => [
@@ -527,7 +503,7 @@ function FranchiseView({
       </Panel>
       <div className="grid gap-4 xl:grid-cols-2">
         <Panel>
-          <PanelHead title="Fee periods" sub="Deterministic basis and evidence quality" />
+          <PanelHead title="Fee periods" />
           <DataTable
             columns={["Fee", "Period", "Basis", "Amount", "Quality", "Status"]}
             rows={fees.map((row, index) => [
@@ -542,10 +518,7 @@ function FranchiseView({
           />
         </Panel>
         <Panel>
-          <PanelHead
-            title="Compliance evidence"
-            sub="Factual checks; missing evidence remains unknown"
-          />
+          <PanelHead title="Compliance evidence" />
           <DataTable
             columns={["Branch", "Check", "Status", "Message"]}
             rows={compliance.map((row, index) => [
@@ -572,10 +545,7 @@ function ReadinessView({
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
       <Panel>
-        <PanelHead
-          title="Branch readiness"
-          sub="Worker-calculated rollout and operational checks"
-        />
+        <PanelHead title="Branch readiness" />
         <DataTable
           columns={["Check", "Status", "Severity", "Message", "Calculated"]}
           rows={readiness.map((row, index) => [
@@ -589,7 +559,7 @@ function ReadinessView({
         />
       </Panel>
       <Panel>
-        <PanelHead title="Enterprise boundaries" sub="Capabilities reported honestly" />
+        <PanelHead title="Enterprise boundaries" />
         <div className="divide-y divide-border">
           {Object.entries(capability).map(([key, value]) => (
             <div key={key} className="flex items-center justify-between gap-3 px-4 py-3">

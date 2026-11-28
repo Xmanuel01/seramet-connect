@@ -152,7 +152,7 @@ function Loyalty() {
       } else {
         throw new Error("Your role does not permit this action.");
       }
-      setNotice("Operation confirmed by the server.");
+      setNotice("Saved.");
       setForm("none");
       setCode("");
       setName("");
@@ -167,13 +167,10 @@ function Loyalty() {
   }
 
   return (
-    <AppShell
-      title="Loyalty"
-      subtitle={"Real loyalty programs, tiers and rewards - " + branchLabel}
-    >
+    <AppShell title="Loyalty" subtitle={branchLabel}>
       {!canView ? (
         <Panel className="p-5">
-          <CrmEmpty title="Access restricted" body="Loyalty viewing permission is required." />
+          <CrmEmpty title="Access restricted" body="You can't view loyalty." />
         </Panel>
       ) : (
         <>
@@ -397,13 +394,10 @@ function Loyalty() {
               </div>
               <div className="mt-4 grid gap-4 lg:grid-cols-2">
                 <Panel>
-                  <PanelHead
-                    title="Configured programs"
-                    sub="Branch access is enforced by the server."
-                  />
+                  <PanelHead title="Configured programs" />
                   {(programs.data?.programs.length ?? 0) === 0 ? (
                     <CrmEmpty
-                      title="No loyalty program configured"
+                      title="No loyalty program yet"
                       body="Create a program before enrolling members or issuing rewards."
                     />
                   ) : (
@@ -431,10 +425,7 @@ function Loyalty() {
                   )}
                 </Panel>
                 <Panel>
-                  <PanelHead
-                    title="Tiers and rewards"
-                    sub="Guests redeem rewards at the POS checkout."
-                  />
+                  <PanelHead title="Tiers and rewards" />
                   <div className="divide-y divide-border">
                     {tiers.data?.tiers.map((row) => (
                       <div className="p-3 text-[12px]" key={row.id}>
@@ -449,7 +440,7 @@ function Loyalty() {
                     {!tiers.data?.tiers.length && !rewards.data?.rewards.length && (
                       <CrmEmpty
                         title="No tiers or rewards"
-                        body="Configure tiers and rewards to enable member redemption."
+                        body="Add tiers and rewards so members can redeem."
                       />
                     )}
                   </div>

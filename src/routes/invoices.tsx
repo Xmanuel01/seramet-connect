@@ -727,9 +727,9 @@ function Invoices() {
       setChangeGiven(change > 0 ? formatMoney(change) : "");
       setReceiptPrompt(settleInvoice);
     } else if (disposition === "AWAITING_VERIFICATION") {
-      setWarning("Payment reference recorded for verification. No paid receipt was generated.");
+      setWarning("Reference saved. It's marked paid once checked.");
     } else if (disposition === "ON_ACCOUNT") {
-      setWarning("Invoice posted to the configured customer receivable account.");
+      setWarning("Added to the customer's account.");
     }
     setSettleInvoice(null);
   };
@@ -737,7 +737,7 @@ function Invoices() {
   return (
     <AppShell
       title="Invoices"
-      subtitle={`Customer invoices and settlement - ${branchLabel}`}
+      subtitle={branchLabel}
       actions={
         <>
           <Btn onClick={mergeFirstOpenBills}>Merge selected</Btn>
@@ -952,10 +952,7 @@ function Invoices() {
         </div>
       </Panel>
       <Panel className="mt-4">
-        <PanelHead
-          title="Delivery log"
-          sub="PDF, email and WhatsApp delivery actions are recorded in-session"
-        />
+        <PanelHead title="Delivery log" />
         <div className="hidden md:block">
           <DataTable cols={["Invoice", "Channel", "Destination", "Created", "Status"]}>
             {deliveryLog.map((entry) => (
@@ -1255,13 +1252,12 @@ function Invoices() {
                 )}
               {selectedSettlementMethod?.category === "CREDIT" && (
                 <div className="rounded-md bg-info-soft px-3 py-2 text-[12px] font-semibold text-info">
-                  Credit settlement posts to the customer or partner receivable account for later
-                  reconciliation.
+                  Added to the customer's account to collect later.
                 </div>
               )}
               {settlementMethod === "PENDING" && (
                 <div className="rounded-md bg-warning-soft px-3 py-2 text-[12px] font-semibold text-warning">
-                  Pending keeps the invoice open for later settlement after restaurant close.
+                  The invoice stays open to settle later.
                 </div>
               )}
               <div className="flex justify-end gap-2 border-t border-border pt-4">

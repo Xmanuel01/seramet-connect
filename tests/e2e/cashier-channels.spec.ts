@@ -186,7 +186,7 @@ for (const channelType of ["TAKEAWAY", "DINE_IN", "OWN_DELIVERY"]) {
         }
         await page.setViewportSize({ width: 1280, height: 900 });
         await page.getByRole("button", { name: "Hold", exact: true }).click();
-        await expect(page.getByText("Order held in active orders.", { exact: true })).toBeVisible();
+        await expect(page.getByText("Order held.", { exact: true })).toBeVisible();
         const held = (await snapshot()).state.orders.find((row) => row.channel === channel.code)!;
         expect(held.delivery?.address).toBe("Westlands test destination 10");
         await page.getByRole("button", { name: /^Orders\s+\d/ }).click();

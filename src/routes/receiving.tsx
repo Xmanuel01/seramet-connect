@@ -216,9 +216,7 @@ function Receiving() {
     <AppShell
       title="Receiving"
       subtitle={
-        po
-          ? `${po.purchase_order_number} - ${po.supplier_name} - ${branchLabel}`
-          : `No approved purchase order awaiting receipt - ${branchLabel}`
+        po ? `${po.purchase_order_number} - ${po.supplier_name} - ${branchLabel}` : branchLabel
       }
       actions={
         <>
@@ -263,7 +261,6 @@ function Receiving() {
       <Panel className="mt-4">
         <PanelHead
           title="Receiving worksheet"
-          sub="What arrived, what was rejected and the price you paid"
           right={
             available.length > 1 ? (
               <select
@@ -440,7 +437,7 @@ function Receiving() {
       </Panel>
 
       <Panel className="mt-4">
-        <PanelHead title="Receipt history" sub="Posted goods receipts for this branch" />
+        <PanelHead title="Receipt history" />
         {!receipts.length ? (
           <div className="p-6 text-center text-[12px] text-muted-foreground">
             No goods receipts have been posted in this branch yet.

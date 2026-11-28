@@ -498,10 +498,7 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
           : "Continue";
 
   return (
-    <AppShell
-      title="Restaurant onboarding"
-      subtitle="A guided start before detailed operational setup"
-    >
+    <AppShell title="Restaurant onboarding">
       <div className="mx-auto w-full max-w-3xl py-2 sm:py-6">
         <div className="mb-4 flex items-center justify-between text-xs font-semibold text-muted-foreground">
           <span>
@@ -520,7 +517,7 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
             <h1 className="text-xl font-bold text-foreground">{definition?.title}</h1>
             <p className="mt-1 text-sm text-muted-foreground">
               {stepId === "currency" && country
-                ? `The domestic currency is suggested from ${country.name}; foreign tenders are optional.`
+                ? `Suggested for ${country.name}. Other currencies are optional.`
                 : definition?.description}
             </p>
           </div>
@@ -670,8 +667,7 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
             <div>
               <div className="text-sm font-semibold">Accepted foreign currencies</div>
               <p className="mt-1 text-xs text-muted-foreground">
-                Optional. A current authorized rate is still required before foreign tender can be
-                accepted.
+                Optional. Each needs an exchange rate before you can accept it.
               </p>
               <div className="mt-3 grid max-h-56 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
                 {availableSecondary.map((currency) => {
@@ -877,7 +873,7 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
             />
             <RateRow
               label="We add a service charge"
-              detail="Applied to menu items marked as service-charge applicable."
+              detail="Added to items marked for service charge."
               checked={tax.chargeService}
               rate={tax.servicePercent}
               mode={tax.serviceMode}
@@ -905,8 +901,7 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
               ))}
             </div>
             <p className="text-xs text-muted-foreground">
-              Cashiers record these payments manually. Automatic M-Pesa prompts and card terminals
-              are connected later under Integrations.
+              You can connect M-Pesa and card machines later.
             </p>
           </div>
         );
@@ -964,8 +959,7 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
                 ))}
               </select>
               <span className="text-xs font-normal text-muted-foreground">
-                Kitchen screens work on any tablet or computer. Printers need the Seramet Print
-                Bridge; add them on the Printers page after setup.
+                Add printers on the Printers page after setup.
               </span>
             </label>
             <div className="grid gap-2 sm:grid-cols-[1fr_160px_auto]">
@@ -1191,9 +1185,7 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
               <span>
                 Use Seramet&apos;s standard restaurant chart of accounts
                 <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
-                  Needed for bills to post to your books. Ticking this records your approval as the
-                  owner; your accountant can change accounts later in Setup Centre. Default kitchen
-                  ticket, bill, receipt and invoice layouts are also created.
+                  Needed so bills reach your books. Your accountant can change it later.
                 </span>
               </span>
             </label>

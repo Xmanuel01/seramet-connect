@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Download, Printer, QrCode, RefreshCw, ShieldCheck } from "lucide-react";
+import { Download, Printer, QrCode, RefreshCw } from "lucide-react";
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
@@ -79,7 +79,7 @@ function QrWorkspace() {
         color: { dark: "#17231f", light: "#ffffff" },
       });
       setIssued({ ...response.qr, tableCode: table.code, dataUrl });
-      setNotice("A new QR capability was issued. Any previous code for this table is now revoked.");
+      setNotice("New QR code ready. The old one no longer works.");
       await query.refresh();
     } catch (cause) {
       setNotice(cause instanceof Error ? cause.message : "QR could not be generated");
@@ -114,13 +114,10 @@ function QrWorkspace() {
   };
 
   return (
-    <AppShell
-      title="QR management"
-      subtitle={`Secure table menu and ordering codes - ${branchLabel}`}
-    >
+    <AppShell title="QR management" subtitle={branchLabel}>
       {!enabled && (
         <p role="alert" className="mb-4">
-          Select one branch with QR management permission.
+          Choose one branch.
         </p>
       )}
       {(host.error || query.error) && (
@@ -156,7 +153,7 @@ function QrWorkspace() {
       )}
       <div className="grid gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
         <Panel>
-          <PanelHead title="Issue table QR" sub="Rotation immediately revokes the previous code" />
+          <PanelHead title="Issue table QR" sub="A new code stops the old one" />
           <div className="grid gap-4 p-4">
             <label className="text-[12px] font-semibold">
               Table
@@ -195,17 +192,11 @@ function QrWorkspace() {
               <RefreshCw className="h-4 w-4" />
               {busy ? "Issuing" : "Generate or rotate"}
             </Btn>
-            <p className="flex gap-2 text-[11px] leading-5 text-muted-foreground">
-              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
-              Codes are random, table scoped, hashed at rest, revocable, and never grant staff
-              access.
-            </p>
           </div>
         </Panel>
         <Panel>
           <PanelHead
             title={issued ? `Table ${issued.tableCode}` : "Printable table card"}
-            sub="The raw QR capability is shown only when issued"
             right={
               issued && (
                 <div className="flex gap-1">
@@ -245,7 +236,7 @@ function QrWorkspace() {
         </Panel>
       </div>
       <Panel className="mt-4">
-        <PanelHead title="QR history" sub="Capability status without exposing raw tokens" />
+        <PanelHead title="QR history" />
         <div className="grid gap-2 p-4 md:grid-cols-2 xl:grid-cols-3">
           {query.data?.tokens.map((row) => (
             <article key={row.id} className="rounded-md border border-border p-3">

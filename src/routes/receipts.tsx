@@ -215,7 +215,6 @@ function Receipts() {
       <Panel className="mt-4">
         <PanelHead
           title="Receipt register"
-          sub="Immutable log - receipts are created only after confirmed payment"
           right={<SearchInput placeholder="Search receipt or order..." />}
         />
         <div className="border-b border-border px-4 py-3">

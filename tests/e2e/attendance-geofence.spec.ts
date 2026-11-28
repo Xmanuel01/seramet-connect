@@ -301,9 +301,7 @@ test("employee clock-in enforces GPS, supervisor config and immutable server tim
   await page.keyboard.press("Escape");
   await context.setGeolocation({ latitude: -1.264, longitude: 36.806, accuracy: 2 });
   await page.getByRole("button", { name: "Clock in" }).click();
-  await expect(
-    page.getByRole("status").filter({ hasText: "Clock-in recorded by the server." }),
-  ).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Clocked in." })).toBeVisible();
   await expect(page.getByText("Clocked in", { exact: true })).toBeVisible();
   await context.setGeolocation({ latitude: -1.264, longitude: 36.806, accuracy: 2 });
   await page.getByRole("button", { name: "Clock out" }).click();
@@ -343,9 +341,7 @@ test("employee clock-in enforces GPS, supervisor config and immutable server tim
   await page.getByRole("button", { name: "Check / retry request" }).click();
   await expect(page.getByRole("button", { name: "Clock out", exact: true })).toBeEnabled();
   expect(committed).toBe(1);
-  await expect(
-    page.getByText("The server confirmed your previous attendance request."),
-  ).toBeVisible();
+  await expect(page.getByText("Your last clock-in or out was saved.")).toBeVisible();
   await context.close();
 });
 

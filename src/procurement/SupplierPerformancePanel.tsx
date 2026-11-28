@@ -86,10 +86,7 @@ export function SupplierPerformancePanel() {
 
           {mixedCurrencies && (
             <Panel className="mt-4">
-              <PanelHead
-                title="Totals by currency"
-                sub="Amounts in different currencies are not added together without conversion"
-              />
+              <PanelHead title="Totals by currency" sub="Each currency is shown separately" />
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
@@ -185,7 +182,7 @@ export function SupplierPerformancePanel() {
           </Panel>
 
           <Panel className="mt-4">
-            <PanelHead title="Metric scope" sub="What these numbers mean" />
+            <PanelHead title="Metric scope" />
             <div className="grid gap-3 p-4 md:grid-cols-3">
               <ScopeNote
                 title="Daily operational metrics"

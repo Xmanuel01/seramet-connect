@@ -225,9 +225,7 @@ export function DailyClosingPanel({
       setReasons({});
       setMpesaReason("");
       setNotice(
-        targetShift
-          ? "Cashier shift closed. Branch business day remains open."
-          : "Day closed. The report is below.",
+        targetShift ? "Shift closed. The day is still open." : "Day closed. The report is below.",
       );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Closing failed");
@@ -250,11 +248,7 @@ export function DailyClosingPanel({
           ))
       ) {
         setOpen(false);
-        setNotice(
-          shiftConfirmed
-            ? "Cashier shift closure confirmed from the server."
-            : "Business day closure confirmed from the server. Review the saved report and email status below.",
-        );
+        setNotice(shiftConfirmed ? "Shift closed." : "Day closed. The report is below.");
       }
     } finally {
       lock.current = false;
@@ -337,7 +331,7 @@ export function DailyClosingPanel({
       )}
       {unavailable && (
         <p className="text-sm text-muted-foreground">
-          Select one branch and resolve pending saves or offline work before closing.
+          Choose one branch, and wait for unsaved work to finish, before closing.
         </p>
       )}
       <div className="grid gap-3 sm:grid-cols-3">
@@ -486,9 +480,7 @@ export function DailyClosingPanel({
                 if (lock.current) return;
                 if (!settingsDirty) return;
                 if (policy.updatedAt !== settingsVersion.current) {
-                  setNotice(
-                    "Closing settings changed on another terminal. Reload settings before saving.",
-                  );
+                  setNotice("Closing settings changed on another till. Reload before saving.");
                   return;
                 }
                 lock.current = true;
@@ -574,8 +566,7 @@ export function DailyClosingPanel({
                 </dl>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  Gross sales, discounts and service charges: not recorded for every invoice in this
-                  period.
+                  Gross sales, discounts and service charges aren't available for this period.
                 </p>
               )}
               <h3 className="font-semibold">2. Reconcile cash</h3>
@@ -661,8 +652,7 @@ export function DailyClosingPanel({
                   <MpesaDaySummaryView summary={mpesa} />
                   {mpesa.stillToMatch.length > 0 && (
                     <label className="block text-sm">
-                      Why can these M-Pesa payments not be matched today? They stay listed until
-                      matched in Payment Control &gt; M-Pesa.
+                      Why can't these M-Pesa payments be matched today?
                       <textarea
                         aria-label="M-Pesa carry-over reason"
                         value={mpesaReason}
@@ -719,11 +709,7 @@ export function DailyClosingPanel({
                   {mpesa.stillToMatch.length}), carried over because: {mpesaReason.trim()}
                 </p>
               ) : null}
-              <p>
-                The closing financial snapshot will be immutable. Ordinary transactions cannot be
-                backdated into the closed period. A report or email failure will not undo the
-                financial close.
-              </p>
+              <p>Once closed, this day can&apos;t be changed.</p>
               {confirmFingerprint !== fingerprint && (
                 <p role="alert">Financial state changed. Return to review before confirming.</p>
               )}

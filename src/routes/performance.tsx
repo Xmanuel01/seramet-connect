@@ -55,10 +55,7 @@ function Performance() {
             />
           </div>
           <Panel className="mt-4 overflow-x-auto">
-            <PanelHead
-              title="Operational staff facts"
-              sub="No opaque score or misconduct inference is calculated"
-            />
+            <PanelHead title="Operational staff facts" />
             <table className="w-full min-w-[940px]">
               <thead>
                 <tr>

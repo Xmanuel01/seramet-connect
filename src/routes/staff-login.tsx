@@ -86,11 +86,7 @@ function StaffLogin() {
   return (
     <AuthShell
       title={invitation ? "Choose your PIN" : pinSet ? "Your PIN is set" : "Staff account sign in"}
-      subtitle={
-        invitation
-          ? "You'll use this 6-digit PIN to sign in on the restaurant's POS"
-          : "Your assigned restaurant access"
-      }
+      subtitle={invitation ? "6 digits, used to sign in on the POS" : undefined}
       footer={
         <Link to="/pos-login" className="font-semibold text-primary">
           Back to employee PIN sign in

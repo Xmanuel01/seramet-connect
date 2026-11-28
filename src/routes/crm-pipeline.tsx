@@ -141,7 +141,7 @@ function CrmPipeline() {
     setBusy(true);
     setError("");
     try {
-      if (!baseCurrency) throw new Error("Tenant base currency is not configured.");
+      if (!baseCurrency) throw new Error("Set your currency in Setup Centre first.");
       const amount = parseMajorAmount(value, baseCurrency);
       if (!Number.isSafeInteger(amount) || amount < 0) {
         throw new Error("Estimated value must be a valid nonnegative amount.");
@@ -165,7 +165,7 @@ function CrmPipeline() {
       setValue(0);
       setCustomer(null);
       setCreateKey(crypto.randomUUID());
-      setNotice("New lead recorded on the server.");
+      setNotice("Lead added.");
       refresh();
     } catch (cause) {
       setError(crmErrorMessage(cause));
@@ -200,7 +200,7 @@ function CrmPipeline() {
       });
       setSelected(null);
       setUpdateKey(crypto.randomUUID());
-      setNotice("Lead updated and its immutable transition recorded.");
+      setNotice("Lead updated.");
       refresh();
     } catch (cause) {
       setError(crmErrorMessage(cause));
@@ -212,7 +212,7 @@ function CrmPipeline() {
   return (
     <AppShell
       title="CRM pipeline"
-      subtitle={"Corporate and catering opportunities in the selected branch - " + branchLabel}
+      subtitle={branchLabel}
       actions={
         canManage ? (
           <Btn variant="primary" onClick={() => setShowCreate((previous) => !previous)}>
@@ -223,7 +223,7 @@ function CrmPipeline() {
     >
       {!canView ? (
         <Panel className="p-5">
-          <CrmEmpty title="Access restricted" body="CRM viewing permission is required." />
+          <CrmEmpty title="Access restricted" body="You can't view leads." />
         </Panel>
       ) : (
         <>
@@ -239,10 +239,7 @@ function CrmPipeline() {
           )}
           {showCreate && canManage && (
             <Panel className="mb-4">
-              <PanelHead
-                title="Create opportunity"
-                sub="Estimated deal value is not recognized revenue. The creating staff member is the owner."
-              />
+              <PanelHead title="Create opportunity" />
               <form onSubmit={create} className="grid gap-3 p-4 md:grid-cols-2">
                 <div className="md:col-span-2">
                   <PosCustomerPicker value={customer} disabled={busy} onSelect={setCustomer} />
@@ -283,7 +280,7 @@ function CrmPipeline() {
                   </select>
                 </label>
                 <label className="grid gap-1 text-[12px]">
-                  Estimated deal value (tenant base currency)
+                  Estimated deal value
                   <input
                     className={crmFieldClass}
                     type="number"
@@ -320,7 +317,7 @@ function CrmPipeline() {
             </Panel>
           )}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-            <Metric label="Open leads (all pages)" value={open} />
+            <Metric label="Open leads" value={open} />
             <Metric
               label="Overdue actions"
               value={summary.data?.summary.overdueCount ?? "Loading"}
@@ -337,11 +334,7 @@ function CrmPipeline() {
             />
           </div>
           <Panel className="mt-4">
-            <PanelHead
-              title="Opportunity register"
-              sub="Stage totals come from the complete authorized branch dataset."
-              right={<Btn onClick={refresh}>Refresh</Btn>}
-            />
+            <PanelHead title="Opportunity register" right={<Btn onClick={refresh}>Refresh</Btn>} />
             <div className="border-b border-border p-4">
               <label className="grid max-w-xs gap-1 text-[12px]">
                 Stage
@@ -420,7 +413,6 @@ function CrmPipeline() {
             <Panel className="mt-4">
               <PanelHead
                 title={"Opportunity: " + selected.contactName}
-                sub="Stage changes and notes are recorded as immutable events."
                 right={<Btn onClick={() => setSelected(null)}>Close</Btn>}
               />
               <div className="grid gap-4 p-4 md:grid-cols-2">

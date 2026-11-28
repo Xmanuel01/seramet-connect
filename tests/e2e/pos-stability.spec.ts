@@ -102,7 +102,7 @@ test("IndexedDB unavailable does not prevent authoritative order entry", async (
   );
   await openCashier(context, page);
   await page.getByRole("button", { name: "Hold", exact: true }).click();
-  await expect(page.getByText("Order held in active orders.")).toBeVisible();
+  await expect(page.getByText("Order held.")).toBeVisible();
   await expect(page.getByLabel("Connection: Online")).toBeVisible();
 });
 
@@ -112,7 +112,7 @@ test("a remote change cannot be overwritten by saving an older recalled cashier 
 }) => {
   await openCashier(context, page);
   await page.getByRole("button", { name: "Hold", exact: true }).click();
-  await expect(page.getByText("Order held in active orders.")).toBeVisible();
+  await expect(page.getByText("Order held.")).toBeVisible();
   const current = await page.evaluate(async () =>
     (await fetch("/api/seramet/transactions")).json(),
   );

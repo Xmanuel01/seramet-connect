@@ -126,7 +126,7 @@ function Prep() {
             prep.error ||
             (!authoritative
               ? "Can't reach Seramet right now. Check your connection, then refresh."
-              : "Select one branch to execute a prep plan.")}
+              : "Choose one branch to use the prep plan.")}
         </div>
       )}
 
@@ -185,7 +185,7 @@ function Prep() {
             <ClipboardList className="mx-auto h-10 w-10 text-muted-foreground" />
             <div className="mt-3 text-sm font-semibold">No prep recommendations for today</div>
             <div className="mt-1 text-[12px] text-muted-foreground">
-              Regenerate after recipes, sales history and prepared stock have been configured.
+              Suggestions appear once you have recipes and sales.
             </div>
           </div>
         </Panel>
@@ -418,7 +418,7 @@ function PrepDetail({ task, onClose }: { task: PrepTask; onClose: () => void }) 
             ))}
             {!task.ingredients.length ? (
               <div className="p-6 text-center text-[12px] text-muted-foreground">
-                No recipe components are configured.
+                This recipe has no ingredients yet.
               </div>
             ) : null}
           </div>
@@ -455,7 +455,7 @@ function PrepDetail({ task, onClose }: { task: PrepTask; onClose: () => void }) 
             </ol>
           ) : (
             <div className="rounded-lg border border-dashed border-border p-6 text-center text-[12px] text-muted-foreground">
-              No published method exists for this recipe version.
+              No method written for this recipe yet.
             </div>
           )}
         </Section>
@@ -614,8 +614,7 @@ function ApproveDialog({
             </select>
           </Field>
           <div className="rounded-md bg-secondary/50 p-3 text-[12px] text-muted-foreground">
-            Approval creates the linked PLANNED production batch. Stock is not moved until
-            completion.
+            Stock moves only when the batch is completed.
           </div>
           <div className="flex justify-end gap-2">
             <Btn disabled={busy} onClick={onClose}>
@@ -665,7 +664,7 @@ function CompleteDialog({
             />
           </Field>
           <div className="rounded-md bg-warning/10 p-3 text-[12px] text-warning">
-            Completing posts ingredient consumption and finished prepared stock to inventory.
+            This takes the ingredients out of stock and adds the prepared item.
           </div>
           <div className="flex justify-end gap-2">
             <Btn disabled={busy} onClick={onClose}>

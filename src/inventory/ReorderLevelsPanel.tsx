@@ -72,10 +72,7 @@ export function ReorderLevelsPanel() {
       </div>
 
       <Panel className="mt-4">
-        <PanelHead
-          title="Reorder levels"
-          sub="Suggested quantity is target stock less currently available stock"
-        />
+        <PanelHead title="Reorder levels" />
         <DataTable
           cols={[
             "Item",

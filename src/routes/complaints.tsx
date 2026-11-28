@@ -79,7 +79,7 @@ function Complaints() {
     if (!canManage || busy) return;
     const chosenCategory = categoryId || activeCategories[0]?.id;
     if (!chosenCategory) {
-      setActionError("Configure an active feedback category before recording a case.");
+      setActionError("Add a feedback category first.");
       return;
     }
     setBusy(true);
@@ -136,7 +136,7 @@ function Complaints() {
   return (
     <AppShell
       title="Complaints and feedback"
-      subtitle={"Real feedback cases, follow-ups and auditable resolution - " + branchLabel}
+      subtitle={branchLabel}
       actions={
         canManage ? (
           <Btn variant="primary" onClick={() => setOpenForm((value) => !value)}>
@@ -147,7 +147,7 @@ function Complaints() {
     >
       {!canView ? (
         <Panel className="p-5">
-          <CrmEmpty title="Access restricted" body="Feedback viewing permission is required." />
+          <CrmEmpty title="Access restricted" body="You can't view feedback." />
         </Panel>
       ) : (
         <>
@@ -158,10 +158,7 @@ function Complaints() {
           )}
           {openForm && canManage && (
             <Panel className="mb-4">
-              <PanelHead
-                title="Record a real feedback case"
-                sub="Do not invent customer or order associations."
-              />
+              <PanelHead title="Record feedback" />
               <form onSubmit={submit} className="grid gap-3 p-4 md:grid-cols-2">
                 <label className="grid gap-1 text-[12px] font-medium">
                   Feedback category
@@ -257,7 +254,6 @@ function Complaints() {
           <Panel className="mt-4">
             <PanelHead
               title="Service cases"
-              sub="Case status changes are audited; no synthetic severity or recovery metrics."
               right={<Btn onClick={feedback.refresh}>Refresh</Btn>}
             />
             <div className="flex flex-wrap gap-3 border-b border-border p-4">
@@ -362,9 +358,7 @@ function Complaints() {
               </div>
             )}
             {feedback.data?.feedback.length === 200 && (
-              <p className="p-3 text-[12px] text-warning">
-                Showing the latest 200 cases. Filtering older cases requires further pagination.
-              </p>
+              <p className="p-3 text-[12px] text-warning">Showing the latest 200.</p>
             )}
           </Panel>
         </>

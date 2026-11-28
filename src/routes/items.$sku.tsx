@@ -31,7 +31,7 @@ function ItemDetail() {
 
   if (!authoritative) {
     return (
-      <AppShell title="Item detail" subtitle={`Inventory item ${sku}`}>
+      <AppShell title="Item detail" subtitle={sku}>
         <EmptyState
           title="Authoritative inventory is unavailable"
           description="Connect the server database to review live stock, valuation and movement history."
@@ -42,7 +42,7 @@ function ItemDetail() {
 
   if (detail.status === "loading" || detail.status === "idle") {
     return (
-      <AppShell title="Item detail" subtitle={`Inventory item ${sku}`}>
+      <AppShell title="Item detail" subtitle={sku}>
         <div className="rounded-lg border border-border bg-secondary/30 px-4 py-8 text-center text-[12px] text-muted-foreground">
           Loading authoritative inventory item...
         </div>
@@ -52,7 +52,7 @@ function ItemDetail() {
 
   if (detail.error || detail.data.length === 0) {
     return (
-      <AppShell title="Item detail" subtitle={`Inventory item ${sku}`}>
+      <AppShell title="Item detail" subtitle={sku}>
         <EmptyState
           title="Inventory item not found"
           description={
@@ -126,10 +126,7 @@ function ItemDetail() {
             <Panel>
               {tab === "Movement" ? (
                 <>
-                  <PanelHead
-                    title="Stock movement"
-                    sub="Latest immutable inventory ledger entries"
-                  />
+                  <PanelHead title="Stock movement" />
                   <DataTable
                     cols={[
                       "Date",
@@ -171,10 +168,7 @@ function ItemDetail() {
                 </>
               ) : tab === "Recipes" ? (
                 <>
-                  <PanelHead
-                    title="Recipe usage"
-                    sub="Active recipe versions using this inventory item"
-                  />
+                  <PanelHead title="Recipe usage" />
                   <DataTable
                     cols={["Recipe", "Version", "Yield", { l: "Ingredient qty", r: true }]}
                   >
@@ -201,10 +195,7 @@ function ItemDetail() {
                 </>
               ) : tab === "Supplier" ? (
                 <>
-                  <PanelHead
-                    title="Supplier"
-                    sub="Preferred source and item-master configuration"
-                  />
+                  <PanelHead title="Supplier" />
                   <div className="grid gap-3 p-4 md:grid-cols-2">
                     <Info
                       label="Preferred supplier"
@@ -223,10 +214,7 @@ function ItemDetail() {
                 </>
               ) : (
                 <>
-                  <PanelHead
-                    title="Stock by warehouse"
-                    sub="Quantity and PAR level in each storage location"
-                  />
+                  <PanelHead title="Stock by warehouse" />
                   <DataTable
                     cols={[
                       ...(isAllBranches ? ["Branch"] : []),

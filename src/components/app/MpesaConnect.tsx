@@ -53,8 +53,7 @@ export function MpesaConnect({ centre }: { centre: Centre }) {
       setKeys({ consumerKey: "", consumerSecret: "", passkey: "" });
       setNotice({
         kind: "success",
-        message:
-          "M-Pesa saved. Your keys are stored encrypted and will not be shown again. Next, turn on payment notifications.",
+        message: "M-Pesa saved. Next, turn on payment notifications.",
       });
     } catch (error) {
       setNotice({
@@ -68,11 +67,7 @@ export function MpesaConnect({ centre }: { centre: Centre }) {
 
   return (
     <Panel>
-      <PanelHead
-        title="Connect M-Pesa"
-        sub="Customers pay your own till or Paybill; Seramet records each payment"
-        right={<Smartphone className="h-4 w-4 text-primary" />}
-      />
+      <PanelHead title="Connect M-Pesa" right={<Smartphone className="h-4 w-4 text-primary" />} />
       <form onSubmit={(event) => void submit(event)} className="space-y-3 p-4">
         <fieldset className="grid grid-cols-2 gap-2">
           <legend className="mb-1 text-[12px] font-semibold text-muted-foreground">
@@ -125,8 +120,7 @@ export function MpesaConnect({ centre }: { centre: Centre }) {
               />
             </label>
             <p className="col-span-2 text-[11px] text-muted-foreground">
-              The store (head office) number is on your Lipa na M-Pesa registration and in the
-              M-Pesa business portal. It is often different from the till number.
+              Often different from the till number. It is on your Lipa na M-Pesa registration.
             </p>
           </div>
         ) : (

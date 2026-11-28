@@ -132,10 +132,10 @@ function locationOnce(): Promise<{
         reject(
           new Error(
             error.code === 1
-              ? "Location permission denied. Enable precise location in browser settings or ask your supervisor for a recorded exception."
+              ? "Location is blocked. Allow it in the browser, or ask your supervisor."
               : error.code === 3
                 ? "Location request timed out. Try again outdoors or ask your supervisor."
-                : "Geolocation is unavailable. Enable precise device location or ask your supervisor.",
+                : "Location isn't available. Turn it on, or ask your supervisor.",
           ),
         ),
       { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 },
@@ -249,9 +249,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
             typeof answer.branchTimezone !== "string" ||
             answer.branchId !== branchId
           )
-            throw new Error(
-              "Attendance configuration is incomplete. Refresh or contact your supervisor.",
-            );
+            throw new Error("Attendance isn't set up yet. Refresh or ask your supervisor.");
           setData(answer);
           if (!preserveSettings) setEditFence(answer.geofence);
         } catch (error) {
@@ -381,7 +379,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
           punchKey.current = null;
           setUnknown(false);
           writeAttendanceDraft(scope, { ...currentDraft.current, pending: undefined });
-          setMessage("The server confirmed your previous attendance request.");
+          setMessage("Your last clock-in or out was saved.");
           return;
         }
         if (pending.action !== action)
@@ -434,9 +432,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
       punchKey.current = null;
       setUnknown(false);
       writeAttendanceDraft(scope, { ...currentDraft.current, pending: undefined });
-      setMessage(
-        action === "IN" ? "Clock-in recorded by the server." : "Clock-out recorded by the server.",
-      );
+      setMessage(action === "IN" ? "Clocked in." : "Clocked out.");
     }, true);
   const managePunch = () =>
     void run(async () => {
@@ -463,7 +459,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
         writeAttendanceDraft(scope, { ...currentDraft.current, supervisor: undefined });
         setReason("");
         setOccurredAt("");
-        setMessage("Previous supervisor exception confirmed by the server.");
+        setMessage("The earlier exception was saved.");
         return;
       }
       if (!selected) throw new Error("Choose an employee");
@@ -914,8 +910,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
                     </Btn>
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Lateness is calculated only when an employee's start time is assigned. No
-                    automatic pay deductions.
+                    Lateness needs a start time on the staff member.
                   </p>
                 </div>
               </div>
@@ -960,7 +955,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
         <Panel className="mt-4">
           <PanelHead
             title="Workplace location for clock-in"
-            sub="Staff can clock in and out only within this distance of the restaurant"
+            sub="How close staff must be to clock in"
           />
           <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
             <div className="col-span-full flex flex-wrap items-center gap-3">

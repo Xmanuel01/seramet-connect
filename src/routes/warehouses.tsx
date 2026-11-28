@@ -108,10 +108,7 @@ function Warehouses() {
       </div>
 
       <Panel className="mt-4">
-        <PanelHead
-          title="Locations"
-          sub="Archive is blocked while stock, active counts/transfers or item defaults still reference a location"
-        />
+        <PanelHead title="Locations" sub="Can't archive a location that still holds stock" />
         <DataTable
           cols={[
             "Location",
@@ -179,10 +176,7 @@ function WarehouseForm({
 
   return (
     <Panel className="mb-4">
-      <PanelHead
-        title="Create storage location"
-        sub="Locations are branch-scoped and used by stock, counts and transfers"
-      />
+      <PanelHead title="Create storage location" />
       <div className="grid gap-3 p-4 md:grid-cols-4">
         <Field label="Branch">
           <select

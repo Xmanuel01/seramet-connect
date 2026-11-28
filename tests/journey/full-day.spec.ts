@@ -253,7 +253,7 @@ test("full day: sign-up, onboarding, setup, trading and business-day close", asy
       .filter({ hasText: "Front till" })
       .getByRole("button", { name: "Activate", exact: true })
       .click();
-    await expect(page.getByText(/securely activated for employee POS sign-in/)).toBeVisible();
+    await expect(page.getByText(/ready for staff PIN sign-in/)).toBeVisible();
     await shot(page, "devices");
     await page.goto("/tables");
     for (const table of ["T1", "T2"]) {
@@ -287,7 +287,7 @@ test("full day: sign-up, onboarding, setup, trading and business-day close", asy
       .filter({ hasText: "Kitchen screen" })
       .getByRole("button", { name: "Activate", exact: true })
       .click();
-    await expect(kitchen.getByText(/securely activated/)).toBeVisible();
+    await expect(kitchen.getByText(/ready for staff PIN sign-in/)).toBeVisible();
     await staffSignIn(kitchen, "chef");
     await kitchen.goto("/kitchen");
     await expect(kitchen.getByRole("heading", { name: "Kitchen display" })).toBeVisible();

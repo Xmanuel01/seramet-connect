@@ -146,7 +146,7 @@ export function StockByStorePanel() {
       </div>
 
       <Panel className="mt-4">
-        <PanelHead title="Stock by store" sub="One row per item in each store" />
+        <PanelHead title="Stock by store" />
         <div className="flex flex-wrap gap-2 border-b border-border px-4 py-3">
           <div className="flex h-9 min-w-[230px] flex-1 items-center gap-2 rounded-md border border-border px-3">
             <Search className="h-4 w-4 text-muted-foreground" />

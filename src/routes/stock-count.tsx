@@ -349,10 +349,7 @@ function StockCount() {
 
       {showStart && !isAllBranches && (
         <Panel className="mb-4">
-          <PanelHead
-            title="Start warehouse count"
-            sub="Seramet snapshots the expected stock before physical counting begins"
-          />
+          <PanelHead title="Start warehouse count" />
           <div className="grid gap-3 p-4 md:grid-cols-3">
             <label className="grid gap-1 text-[11px] font-semibold text-muted-foreground">
               Warehouse
@@ -418,7 +415,7 @@ function StockCount() {
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[320px_1fr]">
         <Panel>
-          <PanelHead title="Count history" sub="Draft, review and posted sessions" />
+          <PanelHead title="Count history" />
           <div className="max-h-[680px] overflow-auto divide-y divide-border">
             {sessions.map((row) => (
               <button

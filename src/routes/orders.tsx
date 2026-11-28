@@ -166,7 +166,7 @@ function Orders() {
   return (
     <AppShell
       title="Orders"
-      subtitle={`${rows.length} orders in selected period - ${branchLabel}`}
+      subtitle={`${rows.length} orders · ${branchLabel}`}
       actions={
         <>
           <Btn onClick={printSelectedBill} disabled={operationBusy || !selectedOrder}>
@@ -200,7 +200,7 @@ function Orders() {
         </div>
       )}
       <Panel className="mt-4">
-        <PanelHead title="All orders" sub="Permanent order history - no hard deletion" />
+        <PanelHead title="All orders" />
         <div className="border-b border-border px-4 py-3">
           <Chips
             items={[
@@ -322,7 +322,7 @@ function Orders() {
                     <Status>{order.status}</Status>
                   </TD>
                   <TD className="text-right text-muted-foreground">
-                    {order.cancellation ? "reason captured" : "immutable"}
+                    {order.cancellation ? "Reason given" : ""}
                   </TD>
                 </tr>
               ))}

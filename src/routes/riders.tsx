@@ -212,11 +212,7 @@ function Riders() {
       setRiderDialogScope("");
     } catch (cause) {
       if (scopeRef.current === requestedScope)
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : "Rider could not be saved. Your entries were retained.",
-        );
+        setError(cause instanceof Error ? cause.message : "Rider could not be saved. Try again.");
     } finally {
       busy.current = false;
       setSaving(false);
@@ -226,7 +222,7 @@ function Riders() {
   return (
     <AppShell
       title="Riders"
-      subtitle={`Rider roster, eligibility and dispatch strategy  -  ${branchLabel}`}
+      subtitle={branchLabel}
       actions={
         <>
           <Btn onClick={() => void navigate({ to: "/delivery" })}>View delivery queue</Btn>
@@ -253,9 +249,7 @@ function Riders() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Add rider</DialogTitle>
-            <DialogDescription>
-              Save a rider to this branch. Employee sign-in credentials are managed in Employees.
-            </DialogDescription>
+            <DialogDescription>Sign-in is set up in Employees.</DialogDescription>
           </DialogHeader>
           <form
             className="grid gap-4"
@@ -326,7 +320,7 @@ function Riders() {
         />
       </div>
       <Panel className="mt-4">
-        <PanelHead title="Rider roster" sub="Live shift, attendance state and delivery workload" />
+        <PanelHead title="Rider roster" />
         <EnterpriseTable
           rows={scopedRows}
           columns={columns}
@@ -335,7 +329,7 @@ function Riders() {
       </Panel>
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <Panel>
-          <PanelHead title="Eligibility rules" sub="A rider must satisfy these before assignment" />
+          <PanelHead title="Eligibility rules" />
           <ul className="space-y-2 px-4 py-4 text-[13px]">
             {eligibility.map((rule) => (
               <li key={rule} className="flex items-center gap-2">
@@ -346,19 +340,12 @@ function Riders() {
           </ul>
         </Panel>
         <Panel>
-          <PanelHead
-            title="Assignment strategy"
-            sub="Manual assignment is active; automation can be enabled per branch later"
-          />
+          <PanelHead title="Assignment strategy" />
           <div className="flex flex-wrap gap-2 px-4 py-4">
             {strategies.map((strategy) => (
               <Status key={strategy}>{strategy}</Status>
             ))}
           </div>
-          <p className="border-t border-border px-4 py-3 text-[12px] text-muted-foreground">
-            If no eligible rider is found, Seramet leaves the task unassigned and exposes it in the
-            Delivery operations queue.
-          </p>
         </Panel>
       </div>
     </AppShell>

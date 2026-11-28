@@ -237,15 +237,12 @@ function SetupCentre() {
           fiscalSettings: {},
           documentBranding: {},
         }),
-      "Business profile saved to the authoritative tenant configuration.",
+      "Business details saved.",
     );
   };
   const createBrand = (event: FormEvent) => {
     event.preventDefault();
-    void run(
-      () => centre.command("/api/seramet/setup/brands", brand),
-      "Brand created for this organisation.",
-    );
+    void run(() => centre.command("/api/seramet/setup/brands", brand), "Brand added.");
   };
   const createBranch = (event: FormEvent) => {
     event.preventDefault();
@@ -268,7 +265,7 @@ function SetupCentre() {
           : {}),
       });
       setBranchCreateKey(crypto.randomUUID());
-    }, "Branch and operating policy created.");
+    }, "Branch added.");
   };
   const uploadImport = async (file: File) => {
     if (!importKind) return;
@@ -280,8 +277,8 @@ function SetupCentre() {
       setNotice({
         kind: next.canCommit ? "success" : "error",
         message: next.canCommit
-          ? "Preview ready for explicit commit."
-          : "Preview contains blocking errors.",
+          ? "Preview ready. Check it, then import."
+          : "Fix the errors in the file, then try again.",
       });
     } catch (error) {
       setNotice({
@@ -302,7 +299,7 @@ function SetupCentre() {
           reviewConfirmed: true,
           confidenceBps: 10000,
         }),
-      "Reviewed external mapping committed.",
+      "Item link saved.",
     );
   };
   const saveDevice = (event: FormEvent) => {
@@ -314,7 +311,7 @@ function SetupCentre() {
           ...Object.fromEntries(Object.entries(device).filter(([, value]) => value.trim() !== "")),
           capabilities: [],
         }),
-      "Device registered with UNKNOWN health until a trusted agent reports.",
+      "Device added.",
     );
   };
   const saveDocument = (event: FormEvent) => {
@@ -333,7 +330,7 @@ function SetupCentre() {
           showQrCode: document.documentType === "BILL",
           configuration: {},
         }),
-      "Document template configuration saved.",
+      "Document layout saved.",
     );
   };
   const saveOpeningStock = (event: FormEvent) => {
@@ -341,7 +338,7 @@ function SetupCentre() {
     if (!currency)
       return setNotice({
         kind: "error",
-        message: "Configure the tenant currency before opening stock.",
+        message: "Set your currency before adding opening stock.",
       });
     void run(
       () =>
@@ -360,7 +357,7 @@ function SetupCentre() {
             },
           ],
         }),
-      "Opening stock batch prepared for approval.",
+      "Opening stock ready for approval.",
     );
   };
   const configureAccount = (event: FormEvent) => {
@@ -373,7 +370,7 @@ function SetupCentre() {
           requirement: "REQUIRED",
           financeSignoff: "APPROVED",
         }),
-      "Required account mapping saved with finance sign-off.",
+      "Account saved.",
     );
   };
   const configureTax = (event: FormEvent) => {
@@ -425,7 +422,7 @@ function SetupCentre() {
           reason: fxRate.reason,
           idempotencyKey: `manual-fx:${currency}:${fxRate.tenderCurrency}:${crypto.randomUUID()}`,
         }),
-      "Authorized exchange rate saved with an immutable audit record.",
+      "Rate saved.",
     );
   };
 
@@ -447,7 +444,7 @@ function SetupCentre() {
             <div className="min-w-0 flex-1">
               <div className="text-[14px] font-bold">Setup data could not be loaded</div>
               <p className="mt-1 break-words text-[12px] leading-5 text-muted-foreground">
-                Check your connection and try again. If it keeps happening, contact Seramet support.
+                Check your internet and try again.
               </p>
               <Btn className="mt-4" onClick={() => void centre.refresh()}>
                 <RefreshCcw className="h-4 w-4" />
@@ -612,7 +609,6 @@ function SetupCentre() {
             <Panel>
               <PanelHead
                 title="Business identity"
-                sub="Your legal details and document defaults"
                 right={<Building2 className="h-4 w-4 text-primary" />}
               />
               <form onSubmit={saveBusiness} className="grid gap-3 p-4 md:grid-cols-2">
@@ -642,9 +638,6 @@ function SetupCentre() {
                       </option>
                     ))}
                   </select>
-                  <span className="text-[11px] font-normal text-muted-foreground">
-                    Confirmed during guided location onboarding.
-                  </span>
                 </label>
                 <label className={labelClass}>
                   Base currency
@@ -708,7 +701,7 @@ function SetupCentre() {
           {section === "BRANCHES" && (
             <div className="grid gap-4 lg:grid-cols-2">
               <Panel>
-                <PanelHead title="Brands" sub={`${centre.structure.brands.length} configured`} />
+                <PanelHead title="Brands" sub={`${centre.structure.brands.length}`} />
                 <form onSubmit={createBrand} className="grid gap-3 p-4">
                   <Field
                     label="Brand code"
@@ -734,21 +727,12 @@ function SetupCentre() {
                       ? "First branch setup"
                       : "New branch"
                   }
-                  sub={
-                    centre.structure.branches.some(
-                      (item) => item.isBootstrap && item.lifecycleState !== "ACTIVE",
-                    )
-                      ? "Finish and activate the existing first branch before adding another location"
-                      : "Operating policy and warehouse"
-                  }
                 />
                 {centre.structure.branches.some(
                   (item) => item.isBootstrap && item.lifecycleState !== "ACTIVE",
                 ) ? (
                   <div className="p-4 text-sm text-muted-foreground">
-                    Your first branch already exists and is being configured through the guided
-                    onboarding steps. This screen will allow additional branches after that branch
-                    reaches Active status.
+                    Finish setting up your first branch before adding another.
                   </div>
                 ) : (
                   <form onSubmit={createBranch} className="grid gap-3 p-4 md:grid-cols-2">
@@ -831,10 +815,10 @@ function SetupCentre() {
           )}
           {section === "MENU" ? (
             <Panel>
-              <PanelHead title="Menu import" sub="Upload a file, check the preview, then import" />
+              <PanelHead title="Menu import" />
               <div className="flex flex-wrap items-center justify-between gap-3 p-4">
                 <p className="text-sm text-muted-foreground">
-                  Bring your whole menu in from a CSV or Excel file on the Imports page.
+                  Import your menu from a CSV or Excel file.
                 </p>
                 <Btn variant="primary" onClick={() => navigate({ to: "/menu-import" })}>
                   Open Imports
@@ -851,17 +835,13 @@ function SetupCentre() {
               setDuplicateStrategy={setDuplicateStrategy}
               onFile={uploadImport}
               onCommit={() =>
-                preview &&
-                void run(() => centre.commitImport(preview), "Import commit accepted and audited.")
+                preview && void run(() => centre.commitImport(preview), "Import done.")
               }
             />
           ) : null}
           {section === "RECIPES_UOM" && (
             <Panel>
-              <PanelHead
-                title="Recipe and UOM validation"
-                sub="Missing recipes, costs, yields, conversions and dependency cycles"
-              />
+              <PanelHead title="Check recipes" />
               <div className="flex flex-wrap gap-2 p-4">
                 <Btn
                   onClick={() =>
@@ -872,7 +852,7 @@ function SetupCentre() {
                           targetType: "RECIPE_VALIDATION",
                           idempotencyKey: `recipe-validation:${Date.now()}`,
                         }),
-                      "Recipe validation test recorded.",
+                      "Recipe check done.",
                     )
                   }
                 >
@@ -888,10 +868,7 @@ function SetupCentre() {
           )}
           {section === "ACCOUNTING" && (
             <Panel>
-              <PanelHead
-                title="Required account mapping"
-                sub="Configuration-driven posting targets with finance sign-off"
-              />
+              <PanelHead title="Accounts" />
               <form onSubmit={configureAccount} className="grid gap-3 p-4 md:grid-cols-2">
                 <Field
                   label="Mapping key"
@@ -906,7 +883,7 @@ function SetupCentre() {
                     onChange={(event) => setAccount({ ...account, accountId: event.target.value })}
                     className={inputClass}
                   >
-                    <option value="">Select configured account</option>
+                    <option value="">Choose account</option>
                     {centre.options.accounts.map((item) => (
                       <option key={String(item["id"])} value={String(item["id"])}>
                         {String(item["code"])} · {String(item["name"])}
@@ -924,10 +901,7 @@ function SetupCentre() {
           )}
           {section === "TAX_SERVICE" && (
             <Panel>
-              <PanelHead
-                title="Tax and service charge"
-                sub="Scoped rates, effective dates, accounting and rounding"
-              />
+              <PanelHead title="Tax and service charge" />
               <form onSubmit={configureTax} className="grid gap-3 p-4 md:grid-cols-2">
                 <label className={labelClass}>
                   Rule type
@@ -1000,10 +974,7 @@ function SetupCentre() {
             <>
               {section === "PAYMENTS" && (
                 <Panel>
-                  <PanelHead
-                    title="Accepted currency rates"
-                    sub="Authorized operational rates for configured secondary cash currencies"
-                  />
+                  <PanelHead title="Accepted currency rates" />
                   <form onSubmit={configureFxRate} className="grid gap-3 p-4 md:grid-cols-2">
                     <label className={labelClass}>
                       Tender currency
@@ -1015,7 +986,7 @@ function SetupCentre() {
                         className={inputClass}
                         required
                       >
-                        <option value="">Select secondary currency</option>
+                        <option value="">Choose currency</option>
                         {centre.onboarding?.acceptedCurrencies
                           .filter((item) => !item.isBase && item.status === "ACTIVE")
                           .map((item) => (
@@ -1046,7 +1017,7 @@ function SetupCentre() {
                     />
                     <div className="md:col-span-2">
                       <Btn type="submit" variant="primary" disabled={busy}>
-                        Save authorized rate
+                        Save rate
                       </Btn>
                     </div>
                   </form>
@@ -1077,7 +1048,7 @@ function SetupCentre() {
               onTest={(targetId) =>
                 void run(
                   () => centre.runTest({ testType: "PRINT", targetType: "DEVICE", targetId }),
-                  "Test print result recorded without a financial transaction.",
+                  "Test print done.",
                 )
               }
               onActivate={(targetId) =>
@@ -1087,7 +1058,7 @@ function SetupCentre() {
                       `/api/seramet/devices/${encodeURIComponent(targetId)}/activate`,
                       {},
                     ),
-                  "This browser is now securely activated for employee POS sign-in.",
+                  "This browser is ready for staff PIN sign-in.",
                 )
               }
             />
@@ -1096,7 +1067,6 @@ function SetupCentre() {
             <Panel>
               <PanelHead
                 title="Document templates"
-                sub="Seramet print identity with tenant and branch branding"
                 right={<Printer className="h-4 w-4 text-primary" />}
               />
               <form onSubmit={saveDocument} className="grid gap-3 p-4 md:grid-cols-2">
@@ -1175,24 +1145,20 @@ function SetupCentre() {
               onPost={(id) =>
                 void run(
                   () => centre.command(`/api/seramet/setup/opening-stock/${id}/post`, {}),
-                  "Opening movements posted and reconciled.",
+                  "Opening stock posted.",
                 )
               }
             />
           )}
           {view === "GO_LIVE" && (
             <Panel>
-              <PanelHead
-                title="Safe onboarding tests"
-                sub="Test records remain isolated from finance, inventory, settlement and tax"
-                right={<Play className="h-4 w-4 text-primary" />}
-              />
+              <PanelHead title="Test runs" right={<Play className="h-4 w-4 text-primary" />} />
               <div className="flex flex-wrap gap-2 p-4">
                 <Btn
                   onClick={() =>
                     void run(
                       () => centre.runTest({ testType: "ORDER", targetType: "POS_ROUTING" }),
-                      "Sandbox order test completed without financial facts.",
+                      "Test order done. Nothing was recorded in your sales.",
                     )
                   }
                 >
@@ -1225,8 +1191,7 @@ function SetupCentre() {
             <>
               <Panel>
                 <PanelHead
-                  title="Readiness evidence"
-                  sub="Deterministic weighted checks; blockers override the score"
+                  title="Readiness checks"
                   right={<ShieldCheck className="h-4 w-4 text-primary" />}
                 />
                 <div className="overflow-x-auto">
@@ -1258,8 +1223,7 @@ function SetupCentre() {
               </Panel>
               <Panel>
                 <PanelHead
-                  title="Support and deployment health"
-                  sub="Actual schema, worker, backup and redaction state"
+                  title="System health"
                   right={<HardDrive className="h-4 w-4 text-primary" />}
                 />
                 <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -1295,7 +1259,7 @@ function SetupCentre() {
                               scope: { setup: true, workers: true, integrations: true },
                               idempotencyKey: `diagnostics:${Date.now()}`,
                             }),
-                          "Redacted support diagnostics export queued.",
+                          "Support file is being prepared.",
                         )
                       }
                     >
@@ -1320,11 +1284,11 @@ function SetupCentre() {
                               rowLimit: 10000,
                               idempotencyKey: `tenant-export:${Date.now()}`,
                             }),
-                          "Audited tenant data export queued.",
+                          "Your data export is being prepared.",
                         )
                       }
                     >
-                      Export tenant data
+                      Export my data
                     </Btn>
                     <span className="self-center text-[11px] text-muted-foreground">
                       {centre.diagnostics.appVersion} · {centre.diagnostics.buildId} ·{" "}
@@ -1337,18 +1301,14 @@ function SetupCentre() {
           )}
           {view === "GO_LIVE" && (
             <Panel>
-              <PanelHead
-                title="Go-live control"
-                sub="Move your restaurant through setup to going live"
-                right={<ShieldCheck className="h-4 w-4 text-primary" />}
-              />
+              <PanelHead title="Go live" right={<ShieldCheck className="h-4 w-4 text-primary" />} />
               <div className="space-y-4 p-4">
                 <div className="grid gap-2 sm:grid-cols-3">
                   <Btn
                     onClick={() =>
                       void run(
                         () => centre.transitionGoLive("READY_FOR_REVIEW"),
-                        "Moved to readiness review.",
+                        "Sent for review.",
                       )
                     }
                   >
@@ -1358,7 +1318,7 @@ function SetupCentre() {
                     onClick={() =>
                       void run(
                         () => centre.transitionGoLive("READY_FOR_GO_LIVE"),
-                        "Marked ready for go-live approval.",
+                        "Ready to go live.",
                       )
                     }
                   >
@@ -1368,7 +1328,7 @@ function SetupCentre() {
                     variant="primary"
                     disabled={blockers.length > 0}
                     onClick={() =>
-                      void run(() => centre.transitionGoLive("LIVE"), "Restaurant is now LIVE.")
+                      void run(() => centre.transitionGoLive("LIVE"), "Your restaurant is live.")
                     }
                   >
                     Go live
@@ -1376,8 +1336,7 @@ function SetupCentre() {
                 </div>
                 {blockers.length > 0 && (
                   <div className="rounded-md border border-danger/30 bg-danger/5 p-3 text-[12px] font-semibold text-danger">
-                    Resolve {blockers.length} blocker{blockers.length === 1 ? "" : "s"} before LIVE.
-                    Security and schema blockers are never overridable.
+                    Fix {blockers.length} item{blockers.length === 1 ? "" : "s"} before going live.
                   </div>
                 )}
               </div>
@@ -1467,7 +1426,6 @@ function ImportPanel({
     <Panel>
       <PanelHead
         title={`${kind.replaceAll("_", " ")} import`}
-        sub="Secure upload, parse, preview, validation and explicit idempotent commit"
         right={<FileSpreadsheet className="h-4 w-4 text-primary" />}
       />
       <div className="grid gap-4 p-4 lg:grid-cols-[260px_minmax(0,1fr)]">
@@ -1537,7 +1495,7 @@ function ImportPanel({
               {!preview && (
                 <tr>
                   <TD colSpan={5} className="py-12 text-center text-muted-foreground">
-                    No authoritative preview loaded.
+                    No preview yet.
                   </TD>
                 </tr>
               )}
@@ -1565,10 +1523,13 @@ function ProviderPanel({
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
       <Panel>
-        <PanelHead title="M-Pesa connections" sub={`${integrations.length} connected`} />
+        <PanelHead
+          title="M-Pesa"
+          sub={integrations.length ? `${integrations.length} added` : undefined}
+        />
         {integrations.length === 0 ? (
           <p className="p-4 text-[13px] text-muted-foreground">
-            No M-Pesa account connected yet. Use the form to connect your till or Paybill.
+            No M-Pesa till or Paybill added yet.
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -1633,8 +1594,7 @@ function MappingPanel({
   return (
     <Panel>
       <PanelHead
-        title="Store and menu mapping"
-        sub="Explicit reviewed mappings; ambiguous suggestions remain conflicts"
+        title="Link delivery-app items"
         right={<Link2 className="h-4 w-4 text-primary" />}
       />
       <form onSubmit={onSubmit} className="grid gap-3 p-4 md:grid-cols-2">
@@ -1743,11 +1703,7 @@ function DevicePanel({
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
       <Panel>
-        <PanelHead
-          title="Device health"
-          sub="Reported state only; missing heartbeats remain UNKNOWN"
-          right={<HardDrive className="h-4 w-4 text-primary" />}
-        />
+        <PanelHead title="Devices" right={<HardDrive className="h-4 w-4 text-primary" />} />
         <div className="overflow-x-auto">
           <table className="w-full min-w-[620px]">
             <thead>
@@ -1792,7 +1748,7 @@ function DevicePanel({
         </div>
       </Panel>
       <Panel>
-        <PanelHead title="Register device" sub="Branch, station and role routing" />
+        <PanelHead title="Register device" />
         <form onSubmit={onSubmit} className="space-y-3 p-4">
           <label className={labelClass}>
             Branch
@@ -1907,10 +1863,7 @@ function OpeningStockPanel({
   return (
     <div className="grid gap-4 lg:grid-cols-[360px_minmax(0,1fr)]">
       <Panel>
-        <PanelHead
-          title="Prepare opening stock"
-          sub={`${selectedBranch || "Branch"} · append-only`}
-        />
+        <PanelHead title="Prepare opening stock" sub={selectedBranch || undefined} />
         <form onSubmit={onSubmit} className="space-y-3 p-4">
           <label className={labelClass}>
             Branch
@@ -2011,10 +1964,7 @@ function OpeningStockPanel({
         </form>
       </Panel>
       <Panel>
-        <PanelHead
-          title="Opening-stock reconciliation"
-          sub="Review, approval, posting and movement trace"
-        />
+        <PanelHead title="Opening stock check" />
         <div className="overflow-x-auto">
           <table className="w-full min-w-[700px]">
             <thead>

@@ -172,10 +172,7 @@ function Transfers() {
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_390px]">
         <Panel>
-          <PanelHead
-            title="Transfer register"
-            sub="Stock leaves the source only on dispatch and enters destination only on receipt"
-          />
+          <PanelHead title="Transfer register" />
           <DataTable
             cols={[
               "Transfer",

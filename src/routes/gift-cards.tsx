@@ -117,7 +117,7 @@ function GiftCards() {
         },
       );
       setNotice(
-        `Gift card issued. Secure token: ${result.giftCard.token}. This is the only time the full token is shown.`,
+        `Gift card issued. Code: ${result.giftCard.token}. Write it down now; it isn't shown again.`,
       );
       setIssueOpen(false);
       setForm((current) => ({ ...current, amount: "", expiresAt: "" }));
@@ -147,7 +147,7 @@ function GiftCards() {
   return (
     <AppShell
       title="Gift cards"
-      subtitle={`Stored-value liability, secure tokens and append-only balance history - ${branchLabel}`}
+      subtitle={branchLabel}
       actions={
         <Btn variant="primary" onClick={() => setIssueOpen(true)}>
           Issue gift card
@@ -181,14 +181,11 @@ function GiftCards() {
           </div>
           <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
             <Panel>
-              <PanelHead
-                title="Gift-card register"
-                sub="Only token endings are displayed; public redemption tokens are never listed"
-              />
+              <PanelHead title="Gift-card register" />
               {!rows.length ? (
                 <CrmEmpty
                   title="No gift cards"
-                  body="Issue stored value only after selecting configured accounting accounts."
+                  body="Choose the accounts, then issue a gift card."
                 />
               ) : (
                 <div className="overflow-x-auto">
@@ -226,10 +223,7 @@ function GiftCards() {
               )}
             </Panel>
             <Panel>
-              <PanelHead
-                title="Balance enquiry"
-                sub="Checks a full token securely against the server ledger"
-              />
+              <PanelHead title="Balance enquiry" />
               <div className="space-y-3 p-4">
                 <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
                   Gift-card token
@@ -258,10 +252,6 @@ function GiftCards() {
                     <Status>{readableStatus(balanceResult.status)}</Status>
                   </div>
                 )}
-                <div className="rounded-md bg-warning-soft px-3 py-2 text-[12px] text-warning">
-                  Redemption occurs only through authoritative checkout. Balance enquiries do not
-                  reserve value.
-                </div>
               </div>
             </Panel>
           </div>
@@ -271,15 +261,12 @@ function GiftCards() {
         <DialogContent className="max-w-[600px] border-border bg-card">
           <DialogHeader>
             <DialogTitle>Issue gift card</DialogTitle>
-            <DialogDescription>
-              Gift-card issuance debits the selected collection account and credits the configured
-              liability account.
-            </DialogDescription>
+            <DialogDescription>Choose where the money is paid in.</DialogDescription>
           </DialogHeader>
           {!accounts.length ? (
             <CrmEmpty
               title="No financial accounts"
-              body="Configure active accounts in the tenant currency before issuing stored value."
+              body="Set up accounts in Setup Centre before issuing gift cards."
             />
           ) : (
             <div className="grid gap-3">
@@ -380,7 +367,7 @@ function AccountSelect({
         onChange={(event) => onChange(event.target.value)}
         className="h-10 rounded-md border border-border bg-card px-3 text-[13px] text-foreground outline-none focus:border-primary"
       >
-        <option value="">Select configured account</option>
+        <option value="">Choose account</option>
         {accounts.map((account) => (
           <option key={account.id} value={account.id}>
             {account.code} - {account.name} ({readableStatus(account.type)})

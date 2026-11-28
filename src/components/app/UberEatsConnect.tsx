@@ -15,10 +15,9 @@ type Environment = "SANDBOX" | "PRODUCTION";
 const signInErrors: Record<string, string> = {
   expired: "The Uber sign-in took too long or was started elsewhere. Start again.",
   declined: "Uber sign-in was cancelled.",
-  config: "Uber Eats is not switched on for this server yet.",
+  config: "Uber Eats isn't available yet. Contact Seramet support.",
   uber: "Uber did not finish the sign-in. Try again in a moment.",
-  scope:
-    "Uber did not give Seramet permission to manage stores (eats.pos_provisioning). Uber has to enable it for the Seramet app.",
+  scope: "Uber hasn't allowed Seramet to manage stores yet. Contact Seramet support.",
 };
 
 /**
@@ -189,10 +188,7 @@ export function UberEatsConnect({ centre }: { centre: ReturnType<typeof useSetup
           right={<Link2 className="h-4 w-4 text-muted-foreground" />}
         />
         {connections.length === 0 ? (
-          <p className="p-4 text-[13px] text-muted-foreground">
-            No Uber Eats store linked yet. Sign in to Uber with the account that manages your store,
-            then choose the store. A branch with several Uber storefronts links each one.
-          </p>
+          <p className="p-4 text-[13px] text-muted-foreground">No Uber Eats store linked yet.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[560px]">
@@ -244,8 +240,7 @@ export function UberEatsConnect({ centre }: { centre: ReturnType<typeof useSetup
                 />
               </label>
               <p className="text-[12px] text-muted-foreground">
-                Uber signed you in but listed no stores for this account. Enter the store ID from
-                Uber&apos;s store details; Uber only accepts a store this account manages.
+                Uber listed no stores. Copy the store ID from the store&apos;s page in Uber.
               </p>
             </>
           ) : choosing ? (
@@ -256,7 +251,7 @@ export function UberEatsConnect({ centre }: { centre: ReturnType<typeof useSetup
                 onChange={(event) => setStoreId(event.target.value)}
                 className={inputClass}
               >
-                <option value="">Select the store</option>
+                <option value="">Choose store</option>
                 {stores.map((store) => (
                   <option key={store.storeId} value={store.storeId}>
                     {store.name}
@@ -295,13 +290,13 @@ export function UberEatsConnect({ centre }: { centre: ReturnType<typeof useSetup
             </>
           )}
           <label className={labelClass}>
-            Order channel for Uber orders
+            Channel
             <select
               value={orderChannelId}
               onChange={(event) => setOrderChannelId(event.target.value)}
               className={inputClass}
             >
-              <option value="">Select the delivery-app channel</option>
+              <option value="">Choose channel</option>
               {channels.map((channel) => (
                 <option key={channel.id} value={channel.id}>
                   {channel.displayName}
@@ -311,7 +306,7 @@ export function UberEatsConnect({ centre }: { centre: ReturnType<typeof useSetup
           </label>
           {!channels.length && (
             <p className="text-[12px] text-muted-foreground">
-              Add Uber Eats as a delivery-app order channel in Settings first.
+              Add an Uber Eats channel in Settings first.
             </p>
           )}
           {message && (
