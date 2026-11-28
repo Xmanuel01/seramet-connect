@@ -4,6 +4,8 @@ import { isCurrentFlow, onboardingStepNumber } from "@/onboarding/onboarding-ste
 import { parseCsvRows, parseXlsxRows } from "@/lib/menu-import-export";
 import { getProviderRegistry } from "@/integrations/provider-registry";
 import { uberEatsDefinition } from "@/integrations/delivery/uber-eats/adapter";
+import { glovoDefinition } from "@/integrations/delivery/glovo/adapter";
+import type { IntegrationConnection } from "@/platform/types";
 import {
   configureUberStoreIntegration,
   deprovisionUberStore,
@@ -55,6 +57,7 @@ import {
   type DeviceSetupInput,
   type DocumentTemplateSetupInput,
   type ExternalMappingInput,
+  type GlovoStoreLinkInput,
   type GoLiveDecision,
   type GoLiveState,
   type ImportIssue,
@@ -3733,6 +3736,102 @@ export class OnboardingService {
     };
   }
 
+  /** Each Glovo vendor is verified with its own Partner API credentials before saving the link. */
+  async linkGlovoStore(input: GlovoStoreLinkInput) {
+    this.require(permissions.settingsIntegrationManage);
+    this.require(permissions.integrationsMappingManage);
+    await this.assertBranch(input.branchId);
+    await this.assertEntitledWhenManaged("integrations.delivery");
+    await this.requireMarketplaceChannel(input.orderChannelId);
+
+    const adapter = getProviderRegistry().get(glovoDefinition.id);
+    if (!adapter) throw validation("Glovo is not available on this server");
+    const digest = await sha256Text(
+      JSON.stringify([input.environment, input.chainId, input.storeId]),
+    );
+    const id = `connection-glovo-${digest}`;
+    const existing = await this.db
+      .prepare(
+        `SELECT tenant_id,branch_id,payload_json FROM provider_connections
+         WHERE provider_id=? AND id=?`,
+      )
+      .bind(glovoDefinition.id, id)
+      .all<{ tenant_id: string; branch_id: string | null; payload_json: string }>();
+    if (
+      (existing.results ?? []).some(
+        (row) => row.tenant_id !== this.actor.tenantId || row.branch_id !== input.branchId,
+      )
+    ) {
+      throw validation("This Glovo store is already configured for another Seramet location");
+    }
+    const previous = parseJson<Record<string, unknown>>(
+      existing.results?.[0]?.payload_json ?? "{}",
+      {},
+    );
+    const previousConfiguration =
+      previous["configuration"] && typeof previous["configuration"] === "object"
+        ? (previous["configuration"] as Record<string, unknown>)
+        : {};
+    const configuration = {
+      ...previousConfiguration,
+      chainId: input.chainId,
+      externalStoreId: input.storeId,
+      externalStoreName: input.storeName,
+      orderChannelId: input.orderChannelId,
+      webhookHeaderName: input.webhookHeaderName,
+    };
+    const displayName = `Glovo · ${input.storeName}`;
+    const stamp = now();
+    // A fresh probe ID prevents a cached access token from validating replacement credentials.
+    const probe: IntegrationConnection = {
+      id: crypto.randomUUID(),
+      tenantId: this.actor.tenantId,
+      branchId: input.branchId,
+      providerId: glovoDefinition.id,
+      environment: input.environment,
+      status: "TESTING",
+      displayName,
+      configuration,
+      metadata: {},
+      consecutiveFailures: 0,
+      createdAt: stamp,
+      updatedAt: stamp,
+    };
+    const health = await adapter.healthCheck(probe, {
+      connection: probe,
+      credentials: input.credentials,
+      correlationId: crypto.randomUUID(),
+    });
+    if (health.status !== "HEALTHY") {
+      throw new ServerOperationError(
+        "EXTERNAL_SERVICE_UNAVAILABLE",
+        502,
+        "Glovo could not verify access to this vendor. Check the Partner API credentials, chain and store ID.",
+      );
+    }
+    const connection = await this.configureProviderConnection({
+      id,
+      branchId: input.branchId,
+      providerId: glovoDefinition.id,
+      environment: input.environment,
+      displayName,
+      configuration,
+      credentials: input.credentials,
+    });
+    await this.configureExternalMapping({
+      connectionId: id,
+      branchId: input.branchId,
+      resourceType: "STORE",
+      internalId: input.branchId,
+      externalId: input.storeId,
+      status: "MAPPED",
+      reviewConfirmed: true,
+      metadata: { displayName: input.storeName },
+    });
+    await this.attachChannelConnection(input.orderChannelId, id);
+    return { connection, store: { storeId: input.storeId, name: input.storeName } };
+  }
+
   /** Step 1 of linking Uber Eats: the Uber sign-in URL for this branch. */
   async startUberEatsLink(input: {
     branchId: string;
@@ -4040,10 +4139,20 @@ export class OnboardingService {
       if (!item) throw validation("Mapped menu item is not active in this tenant");
     }
     const provider = getProviderRegistry().get(connection.provider_id);
-    const id = stableId(
-      "mapping",
-      `${input.connectionId}:${input.resourceType}:${input.externalId}`,
-    );
+    // Keep existing mapping IDs and use the complete identity for new mappings. Long
+    // connection IDs must not cause store and item mappings to overwrite each other.
+    const existingMapping = await this.db
+      .prepare(
+        `SELECT id,created_at FROM provider_mappings
+         WHERE tenant_id=? AND connection_id=? AND resource_type=? AND external_id=?`,
+      )
+      .bind(this.actor.tenantId, input.connectionId, input.resourceType, input.externalId)
+      .first<{ id: string; created_at: string }>();
+    const id =
+      existingMapping?.id ??
+      `mapping-${await sha256Text(
+        JSON.stringify([input.connectionId, input.resourceType, input.externalId]),
+      )}`;
     const stamp = now();
     await createIntegrationRepository(this.db).upsertMapping({
       id,
@@ -4062,7 +4171,7 @@ export class OnboardingService {
         confidenceBps: input.confidenceBps ?? null,
         availabilitySyncSupported: provider.definition.capabilities.includes("SYNC_AVAILABILITY"),
       },
-      createdAt: stamp,
+      createdAt: existingMapping?.created_at ?? stamp,
       updatedAt: stamp,
     });
     await this.db.batch([
