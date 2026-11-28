@@ -1519,7 +1519,8 @@ export class OnboardingService {
         payload_json: string | null;
       }>();
     if (!item) throw notFound("Menu item not found");
-    let categoryCode = item.category_code;
+    // Null means keep the current database value, even if another edit changes it before our write.
+    let categoryCode: string | null = null;
     if (input.categoryCode !== undefined && input.categoryCode !== item.category_code) {
       const next = input.categoryCode.trim();
       if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/.test(next)) {
@@ -1596,7 +1597,7 @@ export class OnboardingService {
       this.db
         .prepare(
           `UPDATE menu_catalog_items SET
-             name=?,category_code=?,description=?,selling_price_minor=?,sku=?,tax_rule_id=?,
+             name=?,category_code=COALESCE(?,category_code),description=?,selling_price_minor=?,sku=?,tax_rule_id=?,
              service_charge_applicable=?,recipe_reference=?,sellable=?,payload_json=?,updated_at=?
            WHERE tenant_id=? AND id=?`,
         )
