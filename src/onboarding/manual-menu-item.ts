@@ -93,7 +93,8 @@ export function createManualMenuCsv(input: ManualMenuItemInput) {
  */
 export type MenuItemUpdateInput = {
   name: string;
-  categoryCode: string;
+  /** Omit to preserve the existing category exactly, including legacy imported codes. */
+  categoryCode?: string;
   description?: string;
   basePrice: string;
   /** Price on online channels; empty clears it so online orders use the normal price. */

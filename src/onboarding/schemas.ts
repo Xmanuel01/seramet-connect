@@ -184,12 +184,9 @@ const optionalMoney = z
 export const menuItemUpdateRequestSchema = z
   .object({
     name: z.string().trim().min(1).max(160),
-    categoryCode: z
-      .string()
-      .trim()
-      .min(1)
-      .max(40)
-      .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
+    // The service validates changed codes after loading the existing tenant-owned item.
+    // Older clients may still submit an unchanged imported category verbatim.
+    categoryCode: z.string().optional(),
     description: z.string().trim().max(1000).optional(),
     basePrice: z
       .string()

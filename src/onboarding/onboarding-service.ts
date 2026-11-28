@@ -1507,12 +1507,29 @@ export class OnboardingService {
     this.require(permissions.setupImport);
     const item = await this.db
       .prepare(
-        `SELECT id,code,currency,payload_json FROM menu_catalog_items
+        `SELECT id,code,currency,category_code,payload_json FROM menu_catalog_items
          WHERE tenant_id=? AND id=? AND active=1`,
       )
       .bind(this.actor.tenantId, itemId)
-      .first<{ id: string; code: string; currency: string; payload_json: string | null }>();
+      .first<{
+        id: string;
+        code: string;
+        currency: string;
+        category_code: string;
+        payload_json: string | null;
+      }>();
     if (!item) throw notFound("Menu item not found");
+    // Null means keep the current database value, even if another edit changes it before our write.
+    let categoryCode: string | null = null;
+    if (input.categoryCode !== undefined && input.categoryCode !== item.category_code) {
+      const next = input.categoryCode.trim();
+      if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/.test(next)) {
+        throw validation(
+          "Category code must be 1–40 letters, numbers, hyphens or underscores and start with a letter or number",
+        );
+      }
+      categoryCode = next.toUpperCase();
+    }
     const money = (label: string, value: string) => {
       const minor = parseMenuMoney(value.trim(), item.currency);
       if (!Number.isSafeInteger(minor) || minor < 0) {
@@ -1580,13 +1597,13 @@ export class OnboardingService {
       this.db
         .prepare(
           `UPDATE menu_catalog_items SET
-             name=?,category_code=?,description=?,selling_price_minor=?,sku=?,tax_rule_id=?,
+             name=?,category_code=COALESCE(?,category_code),description=?,selling_price_minor=?,sku=?,tax_rule_id=?,
              service_charge_applicable=?,recipe_reference=?,sellable=?,payload_json=?,updated_at=?
            WHERE tenant_id=? AND id=?`,
         )
         .bind(
           input.name.trim(),
-          input.categoryCode.trim().toUpperCase(),
+          categoryCode,
           input.description?.trim() || null,
           sellingPriceMinor,
           sku,
