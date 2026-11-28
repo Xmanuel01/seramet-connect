@@ -7086,7 +7086,11 @@ export class OnboardingService {
       )
       .bind(
         this.actor.tenantId,
-        stableId("worker", idempotencyKey),
+        // Readiness jobs are found by their full idempotency key, not by a dispatched job ID.
+        // Long mapping IDs share a prefix; truncating them used to collide on the primary key.
+        jobType === "SETUP_READINESS_RECALCULATION"
+          ? crypto.randomUUID()
+          : stableId("worker", idempotencyKey),
         jobType,
         json(payload),
         idempotencyKey,
