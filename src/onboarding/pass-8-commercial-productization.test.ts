@@ -1654,6 +1654,46 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     ).toMatchObject({ status: "MAPPED" });
   });
 
+  it("queues readiness for several stores on the same branch without job ID collisions", async () => {
+    const prefix = "connection-provider-delivery-uber-eats-546bed1f-a40f-483b-ab4a-0fc5b51f36c4";
+    const stores = ["32324577-4289-4", "0279fa12-719b-4", "a9c6f1f6-f606-4"];
+    for (const externalId of stores) {
+      const connectionId = `${prefix}-${externalId}`;
+      await service.configureProviderConnection({
+        id: connectionId,
+        branchId,
+        providerId: "provider-delivery-uber-eats",
+        environment: "SANDBOX",
+        secretReference: "managed://configured/uber",
+        configuration: { externalStoreId: externalId },
+      });
+      expect(
+        await service.configureExternalMapping({
+          connectionId,
+          branchId,
+          resourceType: "STORE",
+          internalId: branchId,
+          externalId,
+          status: "MAPPED",
+          reviewConfirmed: true,
+        }),
+      ).toMatchObject({ status: "MAPPED" });
+    }
+    const jobs = await db
+      .prepare(
+        "SELECT id,idempotency_key FROM worker_jobs WHERE tenant_id=? AND idempotency_key LIKE 'setup-mapping-readiness:%'",
+      )
+      .bind(tenantId)
+      .all<{ id: string; idempotency_key: string }>();
+    expect(jobs.results).toHaveLength(stores.length);
+    expect(new Set(jobs.results?.map((job) => job.id)).size).toBe(stores.length);
+    expect(new Set(jobs.results?.map((job) => job.idempotency_key)).size).toBe(stores.length);
+    const mappings = await service.listExternalMappings();
+    expect(mappings.filter((mapping) => mapping.resourceType === "STORE")).toHaveLength(
+      stores.length,
+    );
+  });
+
   it("keeps device health unknown until observed and marks test documents", async () => {
     const device = await service.configureDevice({
       branchId,
