@@ -30,6 +30,7 @@ import { setupSections } from "@/onboarding/types";
 import { SetupStageIcon, SetupStatus, SetupTab } from "@/onboarding/ui";
 import { useSetupCentre } from "@/onboarding/use-setup-centre";
 import { UberEatsConnect } from "@/components/app/UberEatsConnect";
+import { GlovoConnect } from "@/components/app/GlovoConnect";
 import { MpesaConnect, MpesaNotificationsButton } from "@/components/app/MpesaConnect";
 import { OnboardingWizard } from "@/onboarding/OnboardingWizard";
 import { ONBOARDING_RESUME_BELOW_BPS } from "@/onboarding/onboarding-steps";
@@ -1559,7 +1560,13 @@ function ProviderPanel({
   const integrations = centre.integrations.filter(
     (item) => item.category === category && item.providerId === "provider-daraja",
   );
-  if (category !== "PAYMENT") return <UberEatsConnect centre={centre} />;
+  if (category !== "PAYMENT")
+    return (
+      <div className="grid gap-4">
+        <UberEatsConnect centre={centre} />
+        <GlovoConnect centre={centre} />
+      </div>
+    );
   const branchName = (id?: string) =>
     id ? (centre.structure.branches.find((item) => item.id === id)?.name ?? id) : "All branches";
   return (
