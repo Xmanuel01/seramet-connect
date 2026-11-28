@@ -4,6 +4,7 @@ import type { SerametEnv, ServerActor } from "@/lib/seramet-auth";
 import { OnboardingService } from "@/onboarding/onboarding-service";
 import { InventoryIntelligenceService } from "@/inventory/inventory-intelligence-service";
 import { createManualMenuCsv } from "@/onboarding/manual-menu-item";
+import { menuItemUpdateRequestSchema } from "@/onboarding/schemas";
 import { allPermissionCodes, permissions } from "@/platform/permissions";
 import {
   createMigratedTestDatabase,
@@ -710,6 +711,58 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     );
     const otherTenant = new OnboardingService(db, { ...actor(), tenantId: secondTenantId }, env);
     await expect(otherTenant.updateMenuItem(id, edit)).rejects.toThrow("Menu item not found");
+  });
+
+  it("updates online prices without changing or rejecting legacy imported categories", async () => {
+    const created = await service.createManualMenuItem({
+      branchId,
+      requestKey: "manual-item-legacy-category",
+      code: "LEGACY-001",
+      name: "Flat bread",
+      categoryCode: "MAIN",
+      basePrice: "850",
+      currency: "KES",
+      stationCode: "MAIN",
+    });
+    const id = String((created as { id: string }).id);
+    const legacyCategory = "Wraps & Sandwiches";
+    await db
+      .prepare("UPDATE menu_catalog_items SET category_code=? WHERE tenant_id=? AND id=?")
+      .bind(legacyCategory, tenantId, id)
+      .run();
+    const edit = {
+      name: "Flat bread",
+      basePrice: "850",
+      onlinePrice: "1000",
+      serviceChargeApplicable: false,
+      sellable: true,
+    };
+    await service.updateMenuItem(id, menuItemUpdateRequestSchema.parse(edit));
+    let row = (await service.listMenuCatalog(branchId)).find((item) => item.id === id);
+    expect(row).toMatchObject({
+      category_code: legacyCategory,
+      selling_price_minor: 85_000,
+      online_price_minor: 100_000,
+    });
+    // Older clients still submit the complete item, including its original category.
+    await service.updateMenuItem(
+      id,
+      menuItemUpdateRequestSchema.parse({ ...edit, categoryCode: legacyCategory, onlinePrice: "" }),
+    );
+    row = (await service.listMenuCatalog(branchId)).find((item) => item.id === id);
+    expect(row).toMatchObject({ category_code: legacyCategory, online_price_minor: null });
+    await expect(
+      service.updateMenuItem(
+        id,
+        menuItemUpdateRequestSchema.parse({ ...edit, categoryCode: "invalid category!" }),
+      ),
+    ).rejects.toThrow("Category code must");
+    await service.updateMenuItem(
+      id,
+      menuItemUpdateRequestSchema.parse({ ...edit, categoryCode: "new-category" }),
+    );
+    row = (await service.listMenuCatalog(branchId)).find((item) => item.id === id);
+    expect(row).toMatchObject({ category_code: "NEW-CATEGORY", online_price_minor: 100_000 });
   });
 
   it("imports an actual Excel workbook into the authoritative branch catalogue", async () => {
