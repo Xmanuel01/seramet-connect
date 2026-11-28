@@ -377,6 +377,30 @@ export const providerSetupSchema = z
   })
   .strict();
 
+export const glovoStoreLinkSchema = z
+  .object({
+    branchId: z.string().trim().min(1).max(120),
+    environment: z.enum(["SANDBOX", "PRODUCTION"]),
+    chainId: z.string().trim().min(1).max(200),
+    storeId: z.string().trim().min(1).max(200),
+    storeName: z.string().trim().min(1).max(160),
+    orderChannelId: z.string().trim().min(1).max(120),
+    webhookHeaderName: z
+      .string()
+      .trim()
+      .min(1)
+      .max(120)
+      .regex(/^[A-Za-z0-9_-]+$/),
+    credentials: z
+      .object({
+        clientId: z.string().trim().min(1).max(4096),
+        clientSecret: z.string().trim().min(1).max(4096),
+        webhookToken: z.string().trim().min(1).max(4096),
+      })
+      .strict(),
+  })
+  .strict();
+
 export const externalMappingSchema = z
   .object({
     connectionId: z.string().trim().min(1).max(120),
