@@ -754,7 +754,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
 
     // Interleave a category change after updateMenuItem reads the row, but before its batch writes.
     const originalBatch = db.batch.bind(db);
-    db.batch = async <T = unknown>(statements: D1PreparedStatement[]) => {
+    db.batch = async <T = unknown>(statements: Parameters<typeof originalBatch>[0]) => {
       await db
         .prepare("UPDATE menu_catalog_items SET category_code=? WHERE tenant_id=? AND id=?")
         .bind("CONCURRENT-CATEGORY", tenantId, id)
