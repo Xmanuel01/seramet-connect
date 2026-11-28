@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getProviderRegistry } from "@/integrations/provider-registry";
 import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
 import type { SerametEnv, ServerActor } from "@/lib/seramet-auth";
 import { OnboardingService } from "@/onboarding/onboarding-service";
@@ -1652,6 +1653,75 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
         reviewConfirmed: true,
       }),
     ).toMatchObject({ status: "MAPPED" });
+  });
+
+  it("configures separate verified Glovo storefronts on the same branch", async () => {
+    await db
+      .prepare(
+        `INSERT INTO order_channels (tenant_id,id,code,channel_type,active,payload_json)
+         VALUES (?,'glovo-channel','GLOVO','MARKETPLACE',1,'{}')`,
+      )
+      .bind(tenantId)
+      .run();
+    const adapter = getProviderRegistry().get("provider-delivery-glovo");
+    if (!adapter) throw new Error("Glovo adapter missing");
+    const probe = vi.spyOn(adapter, "healthCheck").mockResolvedValue({
+      status: "HEALTHY",
+      checkedAt: stamp,
+      message: "Verified test vendor",
+    });
+    try {
+      const input = {
+        branchId,
+        environment: "SANDBOX" as const,
+        chainId: "chain-one",
+        storeId: "vendor-one",
+        storeName: "Glovo one",
+        orderChannelId: "glovo-channel",
+        webhookHeaderName: "X-Partner-Token",
+        credentials: {
+          clientId: "test-client",
+          clientSecret: "test-secret",
+          webhookToken: "test-webhook-token",
+        },
+      };
+      const first = await service.linkGlovoStore(input);
+      const second = await service.linkGlovoStore({
+        ...input,
+        storeId: "vendor-two",
+        storeName: "Glovo two",
+      });
+      expect(first.connection.id).not.toBe(second.connection.id);
+      expect(first.connection.callbackUrl).not.toBe(second.connection.callbackUrl);
+      expect(await rowCount(db, "provider_connections")).toBe(2);
+      expect(await service.listExternalMappings(first.connection.id)).toContainEqual(
+        expect.objectContaining({ resourceType: "STORE", externalId: "vendor-one" }),
+      );
+      expect(await service.listExternalMappings(second.connection.id)).toContainEqual(
+        expect.objectContaining({ resourceType: "STORE", externalId: "vendor-two" }),
+      );
+      expect(JSON.stringify([first, second])).not.toContain("test-secret");
+      const saved = await db
+        .prepare("SELECT payload_json FROM provider_connections WHERE tenant_id=? AND id=?")
+        .bind(tenantId, first.connection.id)
+        .first<string>("payload_json");
+      expect(saved).not.toContain("test-secret");
+      expect(await service.linkGlovoStore(input)).toMatchObject({
+        connection: { id: first.connection.id },
+      });
+      expect(await rowCount(db, "provider_connections")).toBe(2);
+      probe.mockResolvedValue({
+        status: "AUTH_ERROR",
+        checkedAt: stamp,
+        message: "Access denied",
+      });
+      await expect(
+        service.linkGlovoStore({ ...input, storeId: "unverified-vendor" }),
+      ).rejects.toThrow("could not verify access");
+      expect(await rowCount(db, "provider_connections")).toBe(2);
+    } finally {
+      probe.mockRestore();
+    }
   });
 
   it("keeps device health unknown until observed and marks test documents", async () => {

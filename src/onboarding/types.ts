@@ -270,6 +270,17 @@ export type ProviderSetupInput = {
   displayName?: string;
 };
 
+export type GlovoStoreLinkInput = {
+  branchId: string;
+  environment: "SANDBOX" | "PRODUCTION";
+  chainId: string;
+  storeId: string;
+  storeName: string;
+  orderChannelId: string;
+  webhookHeaderName: string;
+  credentials: { clientId: string; clientSecret: string; webhookToken: string };
+};
+
 export type ExternalMappingInput = {
   connectionId: string;
   branchId?: string;
