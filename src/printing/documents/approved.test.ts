@@ -80,6 +80,8 @@ function baseOrder(overrides: Partial<OrderForPrint> = {}): OrderForPrint {
     subtotal: 2750,
     deliveryCharge: 100,
     tax: 0,
+    // Zero-rated branch: a 0% VAT rule is configured, as in the approved design.
+    taxRatesBps: [0],
     total: 2850,
     ...overrides,
   };
@@ -331,6 +333,19 @@ for (const paper of PAPERS) {
       expect(invoice).not.toMatch(/UNPAID|SCAN TO PAY/);
       // Delivery is a charge, never an item row.
       expect(invoice).not.toMatch(/^\|.*Delivery/m);
+    });
+
+    it("omits the VAT row when the business has no VAT configured", () => {
+      const noVat = doc(profile, baseOrder({ taxRatesBps: [] }), "BILL");
+      expect(noVat).not.toMatch(/VAT/);
+      expect(noVat).toMatch(/^\s+SUBTOTAL\s+2,750\.00$/m);
+      expect(noVat).toMatch(/^GRAND TOTAL\s+KES 2,850\.00$/m);
+      const unknown = doc(profile, baseOrder({ taxRatesBps: undefined }), "BILL");
+      expect(unknown).not.toMatch(/VAT/);
+      // A 16% rule configured but nothing taxed (exempt items): "VAT 0.00", no invented rate.
+      const exempt = doc(profile, baseOrder({ taxRatesBps: [1600] }), "BILL");
+      expect(exempt).toMatch(/^\s+VAT\s+0\.00$/m);
+      expect(exempt).not.toMatch(/VAT \(/);
     });
 
     it("prints VAT from the recorded tax with the configured rate, added on top or included", () => {

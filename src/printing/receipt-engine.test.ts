@@ -188,8 +188,8 @@ describe("printed totals and payments", () => {
     expect(content).toMatch(/^\s+SERVICE CHARGE\s+278\.00$/m);
     expect(content).toMatch(/^\s+DISCOUNT\s+\(200\.00\)$/m);
     expect(content).toMatch(/^GRAND TOTAL\s+KES 3,058\.00$/m);
-    // No tax was charged: the approved "VAT (0%) 0.00" row.
-    expect(content).toMatch(/^\s+VAT \(0%\)\s+0\.00$/m);
+    // No tax was charged and no VAT rule is configured: no VAT row at all.
+    expect(content).not.toMatch(/VAT/);
   });
 
   it("prints the cash handed over and the change returned", () => {

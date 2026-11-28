@@ -1323,11 +1323,13 @@ function renderApprovedCustomerDocument(
   const delivery = order.deliveryCharge ?? 0;
   const service = order.serviceCharge ?? 0;
   const discount = order.discount ?? 0;
-  // VAT always prints when the template shows tax, as in the approved design:
-  // "VAT (0%) 0.00" when none was charged. The rate comes from the branch's
-  // configured VAT rule; with no single configured rate it prints as "VAT".
-  // Whether VAT was added on top or is inside the prices follows from the
-  // recorded figures. The amount is always the recorded tax.
+  // The VAT row prints when tax was charged, or when the branch has a VAT rule
+  // configured (a zero-rated branch prints "VAT (0%) 0.00", as in the approved
+  // design). A business with no VAT configured gets no VAT row: a rate is never
+  // invented. The rate comes from the configured rule; with no single
+  // configured rate it prints as "VAT". Whether VAT was added on top or is
+  // inside the prices follows from the recorded figures. The amount is always
+  // the recorded tax.
   const cents = (value: number) => Math.round(value * 100);
   const exclusive =
     cents(order.subtotal) +
@@ -1336,10 +1338,12 @@ function renderApprovedCustomerDocument(
       cents(discount) +
       cents(order.tax) ===
     cents(order.total);
-  const showVat = template.showTax;
+  const configuredRates = (order.taxRatesBps ?? []).filter(Number.isFinite);
+  const showVat = template.showTax && (cents(order.tax) !== 0 || configuredRates.length > 0);
   const vatLabel = (() => {
-    if (cents(order.tax) === 0) return "VAT (0%)";
-    const rates = [...new Set((order.taxRatesBps ?? []).filter((r) => r > 0))];
+    if (cents(order.tax) === 0)
+      return configuredRates.every((rate) => rate === 0) ? "VAT (0%)" : "VAT";
+    const rates = [...new Set(configuredRates.filter((r) => r > 0))];
     const rate =
       rates.length === 1 ? `${Number((rates[0]! / 100).toFixed(2)).toString()}%` : undefined;
     if (exclusive) return rate ? `VAT (${rate})` : "VAT";
