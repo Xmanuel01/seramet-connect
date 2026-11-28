@@ -1523,7 +1523,9 @@ export class OnboardingService {
     if (input.categoryCode !== undefined && input.categoryCode !== item.category_code) {
       const next = input.categoryCode.trim();
       if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/.test(next)) {
-        throw validation("Category code must be 1–40 letters, numbers, hyphens or underscores and start with a letter or number");
+        throw validation(
+          "Category code must be 1–40 letters, numbers, hyphens or underscores and start with a letter or number",
+        );
       }
       categoryCode = next.toUpperCase();
     }
