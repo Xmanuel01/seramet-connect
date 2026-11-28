@@ -751,6 +751,27 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     );
     row = (await service.listMenuCatalog(branchId)).find((item) => item.id === id);
     expect(row).toMatchObject({ category_code: legacyCategory, online_price_minor: null });
+
+    // Interleave a category change after updateMenuItem reads the row, but before its batch writes.
+    const originalBatch = db.batch.bind(db);
+    db.batch = async <T = unknown>(statements: D1PreparedStatement[]) => {
+      await db
+        .prepare("UPDATE menu_catalog_items SET category_code=? WHERE tenant_id=? AND id=?")
+        .bind("CONCURRENT-CATEGORY", tenantId, id)
+        .run();
+      return originalBatch<T>(statements);
+    };
+    try {
+      await service.updateMenuItem(id, menuItemUpdateRequestSchema.parse(edit));
+    } finally {
+      db.batch = originalBatch;
+    }
+    row = (await service.listMenuCatalog(branchId)).find((item) => item.id === id);
+    expect(row).toMatchObject({
+      category_code: "CONCURRENT-CATEGORY",
+      online_price_minor: 100_000,
+    });
+
     await expect(
       service.updateMenuItem(
         id,
