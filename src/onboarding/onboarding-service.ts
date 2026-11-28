@@ -3817,6 +3817,7 @@ export class OnboardingService {
       displayName,
       configuration,
       credentials: input.credentials,
+      secretReference: `managed://seramet/${this.actor.tenantId}/${id}`,
     });
     await this.configureExternalMapping({
       connectionId: id,
