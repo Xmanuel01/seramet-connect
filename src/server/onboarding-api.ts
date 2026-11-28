@@ -15,6 +15,7 @@ import {
   documentTemplateSetupSchema,
   entitlementSchema,
   externalMappingSchema,
+  glovoStoreLinkSchema,
   exportRequestSchema,
   featureFlagSchema,
   goLiveRequestSchema,
@@ -44,6 +45,7 @@ import type {
   DeviceSetupInput,
   DocumentTemplateSetupInput,
   ExternalMappingInput,
+  GlovoStoreLinkInput,
   GoLiveState,
   OpeningStockInput,
   OrganisationProvisionInput,
@@ -588,6 +590,16 @@ export async function handleOnboardingApi(
       },
       201,
     );
+  }
+  if (url.pathname === "/api/seramet/setup/glovo/link" && request.method === "POST") {
+    try {
+      const linked = await service.linkGlovoStore(
+        await parse<GlovoStoreLinkInput>(request, glovoStoreLinkSchema),
+      );
+      return json({ ok: true, ...linked }, 201);
+    } finally {
+      await invalidateAuthoritativeConfiguration(env.SERAMET_DB, actor.tenantId);
+    }
   }
   if (url.pathname === "/api/seramet/setup/uber-eats/authorize" && request.method === "POST") {
     const input = await readObject(request);
