@@ -123,7 +123,9 @@ export function MenuItemEditDialog({
         photo instanceof File ? await uploadImage(photo) : photo === null ? null : undefined;
       await saveItem(item.id, {
         name: draft.name,
-        ...(draft.categoryCode !== item.category_code ? { categoryCode: draft.categoryCode } : {}),
+        ...(draft.categoryCode !== item.category_code
+          ? { categoryCode: draft.categoryCode }
+          : {}),
         description: draft.description,
         basePrice: draft.basePrice,
         onlinePrice: draft.onlinePrice,
